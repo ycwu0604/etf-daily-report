@@ -37,8 +37,8 @@ OUTPUT_DIR = os.path.join(SCRIPT_DIR, 'reports', 'etf_report')
 
 # ── ETF 顯示名稱對應 ──────────────────────────────────────
 ETF_DISPLAY = {
-    '49YTW': '統一台股增長 (49YTW)',
-    '63YTW': '統一深圳成長 (63YTW)',
+    '49YTW': '統一台股增長 (00981A)',
+    '63YTW': '統一升級50 (00403A)',
     '00982A': '群益台灣精選科技 (00982A)',
     '00992A': '群益半導體精選 (00992A)',
 }
@@ -426,7 +426,7 @@ body {{ font-family:"Noto Sans TC","Segoe UI",system-ui,sans-serif; background:v
 </div>
 
 <div class="footer">
-  ETF Daily Report · Ezmoney (49YTW, 63YTW) + Capital API (00982A, 00992A)<br>
+  ETF Daily Report · Ezmoney (00981A, 00403A) + Capital API (00982A, 00992A)<br>
   DB 持久化於 Cloudflare R2 · 報表部署於 Cloudflare Pages
 </div>
 
