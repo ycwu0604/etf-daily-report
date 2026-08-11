@@ -38,6 +38,8 @@ def _get_client():
         print("[ERROR] Missing env vars: R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY")
         sys.exit(1)
 
+    use_proxy = bool(os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY"))
+
     client = boto3.client(
         "s3",
         endpoint_url=endpoint,
@@ -47,6 +49,7 @@ def _get_client():
             region_name="auto",
             s3={"addressing_style": "path"},  # R2 uses path-style
         ),
+        verify=not use_proxy,  # Skip SSL verify when behind OA proxy
     )
     return client, bucket
 
