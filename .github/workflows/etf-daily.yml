@@ -1,9 +1,10 @@
 name: ETF Daily Report
 
 on:
-  # 每天 09:00 台北時間 (UTC+8 = 01:00 UTC)
+  # 每天 18:00 和 24:00 台北時間 (UTC+8 = 10:00 和 16:00 UTC)
   schedule:
-    - cron: '0 1 * * 1-5'   # 週一到週五（交易日）
+    - cron: '0 10 * * 1-5'   # 週一到週五 台北 18:00
+    - cron: '0 16 * * 1-5'   # 週一到週五 台北 24:00
   # 手動觸發 — Actions 頁面按 Run workflow
   workflow_dispatch:
 
