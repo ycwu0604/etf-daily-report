@@ -1,0 +1,137 @@
+name: ETF Daily Report
+
+on:
+  # 每天 09:00 台北時間 (UTC+8 = 01:00 UTC)
+  schedule:
+    - cron: '0 1 * * 1-5'   # 週一到週五（交易日）
+  # 手動觸發 — Actions 頁面按 Run workflow
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  deployments: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ═══════════════════════════════════════════════════════
+      # Step 1: 從 R2 下載 etf_data.db（如果存在）
+      # ═══════════════════════════════════════════════════════
+      - name: Download DB from R2
+        run: |
+          python scripts/r2_sync.py download etf_data.db Ezmoney/etf_data.db
+          # 如果 DB 不存在（首次），init_db 會在下一步建立
+          if [ -f Ezmoney/etf_data.db ]; then
+            echo "DB downloaded: $(wc -c < Ezmoney/etf_data.db) bytes"
+          else
+            echo "No existing DB — will create fresh"
+          fi
+
+      # ═══════════════════════════════════════════════════════
+      # Step 2: Ezmoney — 下載 xlsx → 解析 → 寫入 DB
+      # ═══════════════════════════════════════════════════════
+      - name: Ezmoney pipeline (download + parse + DB)
+        run: |
+          cd Ezmoney
+          python -c "
+          import sqlite3
+          from etf_processor import init_db
+          db = sqlite3.connect('etf_data.db')
+          init_db(db)
+          db.close()
+          print('DB schema initialized')
+          "
+          python ezmoney_download.py
+          python run_daily.py
+        continue-on-error: true
+
+      # ═══════════════════════════════════════════════════════
+      # Step 3: Capital — API 取得持股 → 寫入 DB
+      # ═══════════════════════════════════════════════════════
+      - name: Capital pipeline (API → DB)
+        run: |
+          cd Capital
+          python run_daily.py
+        continue-on-error: true
+
+      # ═══════════════════════════════════════════════════════
+      # Step 4: 產生報表 (xlsx + HTML)
+      # ═══════════════════════════════════════════════════════
+      - name: Generate reports
+        run: |
+          python gen_combined_report.py
+          python gen_html_report.py
+
+      # ═══════════════════════════════════════════════════════
+      # Step 5: 上傳更新後的 DB 到 R2
+      # ═══════════════════════════════════════════════════════
+      - name: Upload DB to R2
+        run: |
+          python scripts/r2_sync.py upload Ezmoney/etf_data.db etf_data.db
+          echo "DB size: $(wc -c < Ezmoney/etf_data.db) bytes"
+
+      # ═══════════════════════════════════════════════════════
+      # Step 6: 上傳 xlsx 到 R2（歷史報表歸檔）
+      # ═══════════════════════════════════════════════════════
+      - name: Upload xlsx reports to R2
+        run: |
+          # 上傳最新的 xlsx 到 R2，key 用 reports/YYYY-MM-DD.xlsx
+          LATEST_XLSX=$(ls -t reports/ETF_Combined_Daily_Report_*.xlsx 2>/dev/null | head -1)
+          if [ -n "$LATEST_XLSX" ]; then
+            DATE_KEY=$(echo "$LATEST_XLSX" | grep -oP '\d{8}' | head -1)
+            # 轉成 YYYY-MM-DD 格式
+            R2_KEY="reports/${DATE_KEY:0:4}-${DATE_KEY:4:2}-${DATE_KEY:6:2}.xlsx"
+            python scripts/r2_sync.py upload "$LATEST_XLSX" "$R2_KEY"
+            # 同時存一份 latest.xlsx 方便下載
+            python scripts/r2_sync.py upload "$LATEST_XLSX" reports/latest.xlsx
+            echo "Uploaded: $R2_KEY + reports/latest.xlsx"
+          else
+            echo "No xlsx found — skipping upload"
+          fi
+
+      # ═══════════════════════════════════════════════════════
+      # Step 7: 部署 HTML 報表到 Cloudflare Pages
+      # ═══════════════════════════════════════════════════════
+      - name: Deploy HTML to Cloudflare Pages
+        run: |
+          # 安裝 wrangler
+          npm install -g wrangler
+
+          # 準備部署目錄：HTML + xlsx 下載連結
+          DEPLOY_DIR=deploy_pages
+          mkdir -p "$DEPLOY_DIR"
+
+          # 複製 HTML 報表
+          cp -r reports/etf_report/* "$DEPLOY_DIR/" 2>/dev/null || true
+
+          # 複製 xlsx 到根目錄（讓 HTML 裡的相對連結能找到）
+          cp reports/ETF_Combined_Daily_Report_*.xlsx "$DEPLOY_DIR/" 2>/dev/null || true
+
+          # 部署到 Cloudflare Pages
+          npx wrangler pages deploy "$DEPLOY_DIR" \
+            --project-name=etf-report \
+            --branch=main \
+            --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
