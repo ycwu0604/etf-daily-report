@@ -1,0 +1,32 @@
+# SQLite DB — stored in R2, not in repo
+Ezmoney/etf_data.db
+
+# Downloaded xlsx files
+Ezmoney/downloads/
+Capital/00982A/
+Capital/00992A/
+
+# Generated reports (local + R2)
+Ezmoney/reports/
+Capital/reports/
+reports/
+
+# Logs
+Ezmoney/logs/
+Capital/logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.Desktop.ini
+
+# OMO
+.omo/
