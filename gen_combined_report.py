@@ -57,6 +57,14 @@ OUTPUT_DIR = os.path.join(SCRIPT_DIR, 'reports')
 # ── ETF 設定 ──────────────────────────────────────────────
 SHEET_ORDER = ALL_ETF_CODES  # 49YTW, 63YTW, 00982A, 00992A
 
+# DB 內部代碼 → 顯示名稱（xlsx sheet title 用）
+ETF_DISPLAY_NAME = {
+    '49YTW': '00981A',
+    '63YTW': '00403A',
+    '00982A': '00982A',
+    '00992A': '00992A',
+}
+
 
 # ── 樣式定義 ──────────────────────────────────────────────
 BLUE_FILL     = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
@@ -79,9 +87,10 @@ HDR_ALIGN   = Alignment(horizontal='center')
 def build_etf_sheet(wb, etf_name, etf_data, all_dates, latest_date, prev_date,
                     futures_data=None):
     """建立單一 ETF 的工作表 (左: 每日比較, 右: 歷史股數變化, 期貨持倉)"""
-    ws = wb.create_sheet(title=etf_name)
+    display_name = ETF_DISPLAY_NAME.get(etf_name, etf_name)
+    ws = wb.create_sheet(title=display_name)
 
-    ws['A1'] = f'{etf_name} 每日持股比較'
+    ws['A1'] = f'{display_name} 每日持股比較'
     ws['A1'].font = TITLE_FONT
     ws['I1'] = '歷史股數變化'
     ws['I1'].font = TITLE_FONT
@@ -402,7 +411,7 @@ def main():
             all_dates, latest_date, prev_date,
             futures_data=futures_data,
         )
-        etf_names.append(etf_code)
+        etf_names.append(ETF_DISPLAY_NAME.get(etf_code, etf_code))
         etf_data_list.append(all_etf_data[etf_code])
 
     if len(etf_data_list) >= 2:
