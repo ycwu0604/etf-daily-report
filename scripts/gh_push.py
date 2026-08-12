@@ -42,7 +42,7 @@ def _api(method, url, token, json_data=None, raw_data=None):
     }
     resp = requests.request(
         method, url, headers=headers, json=json_data, data=raw_data,
-        proxies=PROXIES, timeout=30, verify=False,
+        proxies=PROXIES, timeout=60, verify=False,
     )
     if resp.status_code in (200, 201, 204):
         return resp.json() if resp.text.strip() else {}
