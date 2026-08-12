@@ -41,6 +41,7 @@ ETF_DISPLAY = {
     '63YTW': '統一升級50 (00403A)',
     '00982A': '群益台灣精選科技 (00982A)',
     '00992A': '群益半導體精選 (00992A)',
+    '00991A': '復華未來50 (00991A)',
 }
 
 
@@ -426,7 +427,7 @@ body {{ font-family:"Noto Sans TC","Segoe UI",system-ui,sans-serif; background:v
 </div>
 
 <div class="footer">
-  ETF Daily Report · Ezmoney (00981A, 00403A) + Capital API (00982A, 00992A)<br>
+  ETF Daily Report · Ezmoney (00981A, 00403A) + Capital API (00982A, 00992A) + Fuhwa (00991A)<br>
   DB 持久化於 Cloudflare R2 · 報表部署於 Cloudflare Pages
 </div>
 
