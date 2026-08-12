@@ -5,6 +5,7 @@ Ezmoney/etf_data.db
 Ezmoney/downloads/
 Capital/00982A/
 Capital/00992A/
+Fuhwa/downloads/
 
 # Generated reports (local + R2)
 Ezmoney/reports/
@@ -14,6 +15,7 @@ reports/
 # Logs
 Ezmoney/logs/
 Capital/logs/
+Fuhwa/logs/
 
 # Python cache
 __pycache__/
