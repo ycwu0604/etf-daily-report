@@ -76,7 +76,17 @@ jobs:
         continue-on-error: true
 
       # ═══════════════════════════════════════════════════════
-      # Step 4: 產生報表 (xlsx + HTML)
+      # Step 4: Fuhwa — 下載 xlsx → 解析 → 寫入 DB
+      # ═══════════════════════════════════════════════════════
+      - name: Fuhwa pipeline (download + parse + DB)
+        run: |
+          cd Fuhwa
+          python fuhwa_download.py
+          python fuhwa_db_writer.py
+        continue-on-error: true
+
+      # ═══════════════════════════════════════════════════════
+      # Step 5: 產生報表 (xlsx + HTML)
       # ═══════════════════════════════════════════════════════
       - name: Generate reports
         run: |
@@ -84,7 +94,7 @@ jobs:
           python gen_html_report.py
 
       # ═══════════════════════════════════════════════════════
-      # Step 5: 上傳更新後的 DB 到 R2
+      # Step 6: 上傳更新後的 DB 到 R2
       # ═══════════════════════════════════════════════════════
       - name: Upload DB to R2
         run: |
@@ -92,7 +102,7 @@ jobs:
           echo "DB size: $(wc -c < Ezmoney/etf_data.db) bytes"
 
       # ═══════════════════════════════════════════════════════
-      # Step 6: 上傳 xlsx 到 R2（歷史報表歸檔）
+      # Step 7: 上傳 xlsx 到 R2（歷史報表歸檔）
       # ═══════════════════════════════════════════════════════
       - name: Upload xlsx reports to R2
         run: |
@@ -111,7 +121,7 @@ jobs:
           fi
 
       # ═══════════════════════════════════════════════════════
-      # Step 7: 部署 HTML 報表到 Cloudflare Pages
+      # Step 8: 部署 HTML 報表到 Cloudflare Pages
       # ═══════════════════════════════════════════════════════
       - name: Deploy HTML to Cloudflare Pages
         run: |
