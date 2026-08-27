@@ -41,7 +41,7 @@ jobs:
           if [ -f Ezmoney/etf_data.db ]; then
             echo "DB downloaded: $(wc -c < Ezmoney/etf_data.db) bytes"
           else
-            echo "No DB found — skipping analysis"
+            echo "No DB found — exiting"
             exit 0
           fi
 
@@ -49,7 +49,13 @@ jobs:
       - name: Generate slope analysis HTML
         run: python analyze.py --db Ezmoney/etf_data.db --out docs/index.html
 
-  # 部署到 GitHub Pages (覆蓋前一次)
+      # 把 docs/ 上傳成 GH Pages artifact(必須在 build job 跑,因 deploy job 重新 checkout 拿不到 docs/)
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  # 部署 artifact 到 GitHub Pages
   deploy-gh-pages:
     needs: build
     runs-on: ubuntu-latest
@@ -57,10 +63,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs
       - id: deployment
         uses: actions/deploy-pages@v4
