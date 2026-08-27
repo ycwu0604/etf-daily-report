@@ -59,16 +59,18 @@ def _get_existing_dates(db: sqlite3.Connection, fund_code: str) -> set:
 def _write_holdings(db: sqlite3.Connection, fund_code: str, date2: str, holdings: dict):
     """
     將一個交易日的持股寫入 DB。
-    holdings: {stock_code: {'name': str, 'shares': int}}
+    holdings: {stock_code: {'name': str, 'shares': int, 'weight': float}}
     使用 INSERT OR REPLACE，已有資料會更新。
+    weight_pct 直接從 Capital API 的 stocks[i].weight 讀(已是百分比)。
     """
     records = []
     for code, info in holdings.items():
         name = info.get('name', '')
         shares = info.get('shares')
+        weight = info.get('weight')   # Capital API 已給(單位 %)
         if shares is None:
             continue
-        records.append((date2, fund_code, str(code), name, shares, None))
+        records.append((date2, fund_code, str(code), name, shares, weight))
 
     if records:
         db.executemany(
@@ -78,6 +80,32 @@ def _write_holdings(db: sqlite3.Connection, fund_code: str, date2: str, holdings
             records,
         )
         db.commit()
+
+
+def _write_summary(db: sqlite3.Connection, fund_code: str, date2: str, pcf: dict):
+    """
+    將 pcf 內的 ETF 總體資訊寫入 daily_summary 表。
+    pcf 欄位對應:
+      nav        → net_assets       (ETF 總淨值,TWD)
+      pUnit      → nav              (每單位淨值)
+      totUnit    → outstanding_units(總發行單位數)
+      equMkvalue → stock_amount     (持股市值,Capital API 單位似為「千」)
+    cash_amount / futures_margin / repo_bonds / receivables — Capital API 沒給,留 NULL
+    """
+    db.execute(
+        """INSERT OR REPLACE INTO daily_summary
+           (date, fund_code, net_assets, nav, outstanding_units, stock_amount)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            date2,
+            fund_code,
+            pcf.get('nav'),
+            pcf.get('pUnit'),
+            pcf.get('totUnit'),
+            pcf.get('equMkvalue'),
+        ),
+    )
+    db.commit()
 
 
 def _write_futures_api(db: sqlite3.Connection, fund_code: str, date2: str, api_futures: list):
@@ -172,10 +200,18 @@ def fetch_and_write_capital(
                                 code = str(s.get('stocNo', '')).strip()
                                 name = s.get('stocName', '')
                                 shares = parse_shares(s.get('shareFormat', ''))
+                                weight = s.get('weight')   # Capital API 直接給 % (例如 8.4905)
                                 if code and shares is not None:
-                                    holdings[code] = {'name': name, 'shares': shares}
+                                    holdings[code] = {
+                                        'name': name,
+                                        'shares': shares,
+                                        'weight': weight,
+                                    }
                             if holdings:
                                 _write_holdings(db, etf_code, date2, holdings)
+                                # daily_summary: ETF 總體 (NAV / 單位 / 持股市值)
+                                if pcf:
+                                    _write_summary(db, etf_code, date2, pcf)
                                 existing.add(date2)
                                 new_dates.append(date2)
 
@@ -239,3 +275,4 @@ if __name__ == '__main__':
 
     fetch_and_write_capital(db, date_from, date_to, force=args.force)
     db.close()
+
