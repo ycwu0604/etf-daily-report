@@ -1,0 +1,549 @@
+"""
+ETF 持股斜率分析 — 給 GitHub Pages 用
+=====================================
+
+從 SQLite (daily_holdings) 讀 5 支 ETF 持股,計算最近 N 個交易日的
+「股數 / 權重」線性回歸斜率,排序出正負 Top 5。
+
+設計原則
+--------
+- 不做 I/O:不吃 R2、不打 API;只讀 --db 給的本地 SQLite
+- 斜率 = 線性回歸斜率 (least squares),穩健於單日 spike
+- 資料點不足(<2 個交易日有該股)時,該 row 留空白
+- 有 weight_pct 的 ETF 顯示 shares + weight 兩個 metric;沒有的(00982A/00992A)只顯示 shares
+- 跨 ETF 合計:sum(shares) by stock_code;weight 跨 ETF 加總無意義(需股價),故只顯示合計 shares
+- HTML 純 f-string,零外部依賴
+
+用法
+----
+    python analyze.py --db Ezmoney/etf_data.db --out docs/index.html
+
+工作流會在 Step 5 之後插入此分析,讀從 R2 拉下來的最新 DB。
+"""
+
+import argparse
+import sqlite3
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# ── 設定 ─────────────────────────────────────────────
+ALL_ETFS = ['49YTW', '63YTW', '00982A', '00992A', '00991A']
+ETFS_WITH_WEIGHT = {'49YTW', '63YTW', '00991A'}   # Ezmoney + Fuhwa 有 weight_pct
+# 內部代碼 → 對外代號 (Ezmoney 49YTW/63YTW 是內部碼,Capital/Fuhwa 已是對外)
+ETF_DISPLAY = {'49YTW': '00981A', '63YTW': '00403A',
+               '00982A': '00982A', '00992A': '00992A', '00991A': '00991A'}
+WINDOWS = (3, 5, 10)
+TOP_N = 5
+
+# ── 斜率計算 ─────────────────────────────────────────
+def linear_slope(points):
+    """
+    Linear regression slope (least squares).
+    points: [(x, y), ...] where x is numeric (date index 0..n-1)
+    Returns None if < 2 points or all xs are equal.
+    """
+    if not points or len(points) < 2:
+        return None
+    n = len(points)
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    x_mean = sum(xs) / n
+    y_mean = sum(ys) / n
+    num = sum((xs[i] - x_mean) * (ys[i] - y_mean) for i in range(n))
+    den = sum((xs[i] - x_mean) ** 2 for i in range(n))
+    if den == 0:
+        return None
+    return num / den
+
+# ── DB 查詢 ─────────────────────────────────────────
+def fetch_etf_history(db, fund_code):
+    """
+    回傳 [(date, stock_code, stock_name, shares, weight_pct)] 給定 ETF,
+    按日期升冪排序。只取最近 MAX(WINDOWS) 個交易日 (夠用即可)。
+    """
+    max_w = max(WINDOWS)
+    rows = db.execute('''
+        SELECT date, stock_code, stock_name, shares, weight_pct
+        FROM daily_holdings
+        WHERE fund_code = ? AND shares IS NOT NULL
+        ORDER BY date DESC
+        LIMIT 10000
+    ''', (fund_code,)).fetchall()
+    # Reverse to ascending
+    rows = list(reversed(rows))
+    # 取最近 max_w 個交易日
+    dates = sorted({r[0] for r in rows}, reverse=True)[:max_w]
+    dates = sorted(dates)
+    rows = [r for r in rows if r[0] in set(dates)]
+    return rows, dates
+
+def fetch_combined_history(db):
+    """
+    回傳 [(date, stock_code, stock_name, total_shares)] 跨所有 ETF 加總。
+    按 (date, stock_code) 加總 shares。股票名稱取最短的(避免「國巨」/「國巨*」/「國巨股份」混用)。
+    """
+    max_w = max(WINDOWS)
+    rows = db.execute('''
+        SELECT date, stock_code,
+               (SELECT stock_name FROM daily_holdings dh2
+                WHERE dh2.stock_code = dh1.stock_code
+                ORDER BY LENGTH(stock_name) ASC, stock_name ASC
+                LIMIT 1) as name,
+               SUM(shares) as total_shares
+        FROM daily_holdings dh1
+        WHERE shares IS NOT NULL
+        GROUP BY date, stock_code
+        ORDER BY date DESC
+    ''').fetchall()
+    dates = sorted({r[0] for r in rows}, reverse=True)[:max_w]
+    dates = sorted(dates)  # 升冪,跟 per-ETF 一致
+    dates_set = set(dates)
+    rows = [r for r in rows if r[0] in dates_set]
+    rows = list(reversed(rows))
+    return rows, dates
+
+# ── 分析: 給定一個 (date -> {stock -> (name, shares, weight)}) 的 view ──
+def analyze_view(history, dates, has_weight):
+    """
+    history: list of rows (date, stock_code, name, shares, weight_pct_or_None)
+    dates: list of dates in window (sorted asc), length >= 2
+    回傳 dict: { window: { 'pos_sh': [...], 'neg_sh': [...], 'pos_wt': [...], 'neg_wt': [...] } }
+       每個 list 是 [(code, name, slope), ...] sorted by slope
+    """
+    # 建立 pivot: date -> { stock_code -> (name, shares, weight) }
+    pivot = {}
+    for row in history:
+        d = row[0]
+        code = row[1]
+        name = row[2]
+        shares = row[3]
+        weight = row[4] if len(row) >= 5 else None
+        if d not in pivot:
+            pivot[d] = {}
+        pivot[d][code] = (name, shares, weight)
+
+    all_codes = set()
+    for d in dates:
+        all_codes.update(pivot.get(d, {}).keys())
+
+    n = len(dates)
+    results = {}
+    for w in WINDOWS:
+        if w > n:
+            results[w] = {'pos_sh': [], 'neg_sh': [], 'pos_wt': [], 'neg_wt': []}
+            continue
+        recent_dates = dates[-w:]
+        # 收集每個 stock 的 (shares_slope, weight_slope)
+        rows_for_w = []
+        for code in all_codes:
+            name = None
+            xs = list(range(len(recent_dates)))
+            sh_series = []
+            wt_series = []
+            for i, d in enumerate(recent_dates):
+                rec = pivot.get(d, {}).get(code)
+                if rec is None:
+                    sh_series.append(None)
+                    wt_series.append(None)
+                else:
+                    nm, sh, wt = rec
+                    if name is None and nm:
+                        name = nm
+                    sh_series.append(sh if sh is not None else None)
+                    wt_series.append(wt if wt is not None else None)
+            sh_pts = [(x, y) for x, y in zip(xs, sh_series) if y is not None]
+            wt_pts = [(x, y) for x, y in zip(xs, wt_series) if y is not None] if has_weight else []
+            slope_sh = linear_slope(sh_pts)
+            slope_wt = linear_slope(wt_pts) if has_weight else None
+            rows_for_w.append((code, name or '', slope_sh, slope_wt))
+
+        # Shares ranking (只列斜率非 0 的)
+        valid_sh = [r for r in rows_for_w if r[2] is not None and r[2] != 0]
+        pos_sh = sorted([r for r in valid_sh if r[2] > 0], key=lambda r: -r[2])[:TOP_N]
+        neg_sh = sorted([r for r in valid_sh if r[2] < 0], key=lambda r:  r[2])[:TOP_N]
+        results[w] = {'pos_sh': pos_sh, 'neg_sh': neg_sh, 'pos_wt': [], 'neg_wt': []}
+
+        # Weight ranking (獨立於 shares,只用有效 weight 斜率)
+        if has_weight:
+            valid_wt = [r for r in rows_for_w if r[3] is not None and r[3] != 0]
+            pos_wt = sorted([r for r in valid_wt if r[3] > 0], key=lambda r: -r[3])[:TOP_N]
+            neg_wt = sorted([r for r in valid_wt if r[3] < 0], key=lambda r:  r[3])[:TOP_N]
+            results[w]['pos_wt'] = pos_wt
+            results[w]['neg_wt'] = neg_wt
+    return results
+
+# ── HTML 渲染 ─────────────────────────────────────────
+def render_dense_summary(per_etf_results, combined_results):
+    """
+    ONE mega-table, max data density.
+    Columns: 1 rank + 6 ETFs × 3 windows = 19 cols total.
+            Each ETF has 3 sub-columns: 3 日, 5 日, 10 日.
+    Rows: 4 sections × (1 header + 5 ranks) = 24 rows.
+          Section order: 股數+, 股數−, 權重+, 權重−.
+    Cells: code (large) + name (small); '—' for missing data / no weight.
+    """
+    # Column groups: 5 ETFs + 1 combined
+    col_groups = list(ALL_ETFS) + ['__combined__']
+
+    def label_of(g):
+        return '跨 5 ETF' if g == '__combined__' else ETF_DISPLAY[g]
+
+    def has_weight_of(g):
+        if g == '__combined__':
+            return False
+        return g in ETFS_WITH_WEIGHT
+
+    def get_rows(g, w, key):
+        if g == '__combined__':
+            return combined_results.get(w, {}).get(key, [])
+        return per_etf_results.get(g, {}).get(w, {}).get(key, [])
+
+    sections = [
+        ('股數斜率 (+)', 'pos_sh'),
+        ('股數斜率 (−)', 'neg_sh'),
+        ('權重斜率 (+)', 'pos_wt'),
+        ('權重斜率 (−)', 'neg_wt'),
+    ]
+    n_cols = 1 + len(col_groups) * len(WINDOWS)  # 1 rank + 18 data
+
+    html = ['<div class="dense-summary">']
+    html.append('<table class="dense">')
+    # Header (2 rows)
+    html.append('  <thead>')
+    html.append('    <tr>')
+    html.append(f'      <th rowspan="2" class="corner">排名</th>')
+    for g in col_groups:
+        html.append(f'      <th colspan="3" class="etf-col">{label_of(g)}</th>')
+    html.append('    </tr>')
+    html.append('    <tr>')
+    for g in col_groups:
+        for w in WINDOWS:
+            html.append(f'      <th>{w} 日</th>')
+    html.append('    </tr>')
+    html.append('  </thead>')
+    html.append('  <tbody>')
+
+    for section_title, key in sections:
+        # Section header row (spans all columns)
+        html.append('    <tr class="section-header">')
+        html.append(f'      <th colspan="{n_cols}" class="section-title">{section_title}</th>')
+        html.append('    </tr>')
+        # 5 rank rows
+        cls = 'pos' if key.startswith('pos') else 'neg'
+        for rank in range(TOP_N):
+            html.append('    <tr>')
+            html.append(f'      <td class="rank">{rank + 1}</td>')
+            for g in col_groups:
+                # Weight sections: blanks for ETFs without weight
+                if key in ('pos_wt', 'neg_wt') and not has_weight_of(g):
+                    for _ in WINDOWS:
+                        html.append('      <td class="muted">—</td>')
+                    continue
+                for w in WINDOWS:
+                    rows_list = get_rows(g, w, key)
+                    if rank < len(rows_list):
+                        entry = rows_list[rank]
+                        stock_code = entry[0]
+                        stock_name = entry[1]
+                        html.append(
+                            f'      <td class="{cls}">'
+                            f'<span class="code">{stock_code}</span>'
+                            f'<span class="nm">{stock_name}</span></td>')
+                    else:
+                        html.append('      <td class="muted">—</td>')
+            html.append('    </tr>')
+
+    html.append('  </tbody>')
+    html.append('</table>')
+    html.append('</div>')
+    return ''.join(html)
+
+
+def render_etf_summary(label, res, has_weight):
+    """
+    Render one ETF's summary card: 4 (or 2) sub-grids.
+    每個 sub-grid 是 5×3 (rank × window) table,顯示 Top 5 股票代號/名稱。
+    res: analyze_view() 結果 (含 pos_sh/neg_sh/pos_wt/neg_wt 各 window)
+    has_weight: True 顯示 4 個 sub-grid (股+/-, 權+/-),False 只 2 個 (股+/-)
+    """
+    html = []
+    html.append(f'<div class="etf-card">')
+    html.append(f'  <h3 class="etf-header">{label}</h3>')
+    html.append('  <div class="summary-grids">')
+
+    sub_grids = [
+        ('股數斜率 ▲', 'pos_sh', 'pos'),
+        ('股數斜率 ▼', 'neg_sh', 'neg'),
+    ]
+    if has_weight:
+        sub_grids += [
+            ('權重斜率 ▲', 'pos_wt', 'pos'),
+            ('權重斜率 ▼', 'neg_wt', 'neg'),
+        ]
+
+    for grid_title, key, dir_class in sub_grids:
+        html.append('    <div class="grid">')
+        html.append(f'      <div class="grid-title {dir_class}">{grid_title}</div>')
+        html.append('      <table>')
+        html.append('        <thead>')
+        html.append('          <tr><th>#</th>')
+        for w in WINDOWS:
+            html.append(f'          <th>{w} 日</th>')
+        html.append('          </tr>')
+        html.append('        </thead>')
+        html.append('        <tbody>')
+        for rank in range(TOP_N):
+            html.append('          <tr>')
+            html.append(f'          <td class="rank">{rank + 1}</td>')
+            for w in WINDOWS:
+                rows_list = res.get(w, {}).get(key, [])
+                if rank < len(rows_list):
+                    entry = rows_list[rank]
+                    stock_code = entry[0]
+                    stock_name = entry[1]
+                    html.append(
+                        f'          <td class="{dir_class}">'
+                        f'<span class="code">{stock_code}</span>'
+                        f'<span class="nm">{stock_name}</span></td>')
+                else:
+                    html.append('          <td class="muted">—</td>')
+            html.append('          </tr>')
+        html.append('        </tbody>')
+        html.append('      </table>')
+        html.append('    </div>')
+
+    html.append('  </div>')
+    html.append('</div>')
+    return ''.join(html)
+
+
+def fmt_slope(v, kind='shares'):
+    if v is None:
+        return '<span class="muted">—</span>'
+    if kind == 'shares':
+        # shares/day
+        if abs(v) >= 1000:
+            return f'{v:+,.0f}/日'
+        elif abs(v) >= 1:
+            return f'{v:+,.2f}/日'
+        else:
+            return f'{v:+,.4f}/日'
+    else:
+        # weight %/day
+        return f'{v:+.3f}%/日'
+
+def render_block(title, shares_rows, weight_rows, has_weight, direction):
+    """Render one analysis block: shares slope table + (optional) weight slope table."""
+    dir_class = 'pos' if direction == 'pos' else 'neg'
+    arrow = '▲' if direction == 'pos' else '▼'
+    html = [f'<div class="block">']
+    html.append(f'  <h3 class="{dir_class}">{arrow} {title}</h3>')
+    # Shares table
+    html.append('  <table class="t">')
+    html.append('    <thead><tr><th colspan="4">股數斜率</th></tr>')
+    html.append('    <tr><th>#</th><th>代號</th><th>名稱</th><th>斜率</th></tr></thead>')
+    html.append('    <tbody>')
+    if not shares_rows:
+        html.append('      <tr><td colspan="4" class="muted">(資料點不足,留白)</td></tr>')
+    else:
+        for i, (code, name, slope_sh, _wt) in enumerate(shares_rows, 1):
+            html.append(f'      <tr><td>{i}</td><td>{code}</td><td>{name}</td>'
+                        f'<td class="{dir_class}">{fmt_slope(slope_sh, "shares")}</td></tr>')
+    html.append('    </tbody></table>')
+    # Weight table (independent ranking)
+    if has_weight:
+        html.append('  <table class="t">')
+        html.append('    <thead><tr><th colspan="4">權重斜率</th></tr>')
+        html.append('    <tr><th>#</th><th>代號</th><th>名稱</th><th>斜率</th></tr></thead>')
+        html.append('    <tbody>')
+        if not weight_rows:
+            html.append('      <tr><td colspan="4" class="muted">(資料點不足,留白)</td></tr>')
+        else:
+            for i, (code, name, _sh, slope_wt) in enumerate(weight_rows, 1):
+                html.append(f'      <tr><td>{i}</td><td>{code}</td><td>{name}</td>'
+                            f'<td class="{dir_class}">{fmt_slope(slope_wt, "weight")}</td></tr>')
+        html.append('    </tbody></table>')
+    html.append('</div>')
+    return ''.join(html)
+
+CSS = """
+:root { color-scheme: light dark; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+       max-width: 1100px; margin: 1.5em auto; padding: 0 1em; line-height: 1.5; }
+h1 { font-size: 1.6em; border-bottom: 2px solid #888; padding-bottom: .3em; }
+h2 { font-size: 1.3em; margin-top: 2em; border-left: 4px solid #4472C4; padding-left: .5em; }
+h3 { font-size: 1.0em; margin: 1em 0 .5em; }
+.pos { color: #c62828; }
+.neg { color: #1565c0; }
+.muted { color: #888; font-style: italic; }
+.meta { color: #555; font-size: .9em; }
+
+/* dense summary table — max data density, one mega-table */
+.dense-summary { overflow-x: auto; margin: 1em 0;
+                 border: 1px solid #ccc; border-radius: 6px; }
+table.dense { border-collapse: collapse; font-size: .78em; min-width: 100%; }
+table.dense th, table.dense td { padding: .25em .35em; border: 1px solid #ddd;
+                                  text-align: center; vertical-align: top;
+                                  white-space: nowrap; }
+table.dense thead th.corner { background: #2c4f8e; color: white; font-weight: 600;
+                              position: sticky; left: 0; z-index: 2; }
+table.dense thead th.etf-col { background: #4472C4; color: white; font-weight: 600; }
+table.dense thead th { background: #4472C4; color: white; font-weight: 600;
+                        position: sticky; top: 0; z-index: 1; }
+table.dense tr.section-header th { background: #e8edf7; color: #2c4f8e;
+                                    text-align: left; padding: .4em .8em;
+                                    font-weight: 700; font-size: 1em;
+                                    border-left: none; }
+table.dense td.rank { background: #f0f0f0; color: #666; font-weight: 700;
+                       position: sticky; left: 0; }
+table.dense td .code { font-weight: 700; font-size: 1em; }
+table.dense td .nm { font-size: .85em; color: #555; display: block; margin-top: .1em; }
+table.dense td.muted { color: #aaa; font-weight: normal; }
+table.dense td.pos { color: #c62828; }
+table.dense td.neg { color: #1565c0; }
+table.dense tbody tr:nth-child(even) td:not(.rank) { background: #fafafa; }
+
+/* collapsible ETF sections */
+details.etf-section { border: 1px solid #ccc; border-radius: 6px;
+                      padding: .6em 1em; margin: 1em 0; }
+details.etf-section > summary { cursor: pointer; font-size: 1.15em; font-weight: 600;
+                                list-style: none; padding: .3em 0; }
+details.etf-section > summary::-webkit-details-marker { display: none; }
+details.etf-section > summary::before { content: '▶ '; color: #888; font-size: .8em; }
+details.etf-section[open] > summary::before { content: '▼ '; }
+details.etf-section[open] { background: #fafafa; padding-bottom: 1em; }
+
+.block { display: flex; flex-wrap: wrap; gap: 1em; margin-bottom: 1.2em; }
+.block table { flex: 1 1 320px; border-collapse: collapse; }
+.block th { background: #f0f0f0; color: #222; padding: .4em .6em; text-align: left; font-size: .9em; }
+.block td { padding: .35em .6em; border-bottom: 1px solid #eee; font-size: .95em; }
+.block tr:last-child td { border-bottom: none; }
+@media (prefers-color-scheme: dark) {
+  body { background: #1a1a1a; color: #ddd; }
+  h1, h2 { border-color: #555; }
+  .block th { background: #333; color: #eee; }
+  .block td { border-bottom-color: #333; }
+  .pos { color: #ef5350; }
+  .neg { color: #64b5f6; }
+  table.summary th, table.summary td { border-color: #555; }
+  table.dense th, table.dense td { border-color: #555; }
+  table.dense thead th { background: #1f3a6e; }
+  table.dense tr.section-header th { background: #2a3a5e; color: #c0d0f0; }
+  table.dense tbody tr:nth-child(even) td:not(.rank) { background: #222; }
+  table.dense td .nm { color: #aaa; }
+  .dense-summary { border-color: #555; background: #1f1f1f; }
+  details.etf-section { border-color: #555; }
+  details.etf-section[open] { background: #222; }
+}
+"""
+
+def render_html(per_etf_results, combined_results, dates_meta, output_path):
+    """
+    per_etf_results: { etf_code: analyze_view(...) result dict }
+    combined_results: analyze_view(...) result dict
+    dates_meta: { etf_code: [dates, ...] or 'combined': [...] }
+    """
+    today = datetime.now().strftime('%Y-%m-%d %H:%M')
+    html = []
+    html.append('<!DOCTYPE html>')
+    html.append('<html lang="zh-Hant"><head>')
+    html.append('<meta charset="utf-8">')
+    html.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
+    html.append('<title>ETF 持股分析</title>')
+    html.append(f'<style>{CSS}</style>')
+    html.append('</head><body>')
+    html.append('<h1>ETF 持股分析</h1>')
+    html.append(f'<p class="meta">產出時間:{today}</p>')
+
+    # ── Dense summary table at top (one mega-table, all ETFs × all windows) ──
+    html.append('<h2>總表</h2>')
+    html.append(render_dense_summary(per_etf_results, combined_results))
+
+    # ── Per ETF sections (collapsible) ──
+    for code in ALL_ETFS:
+        if code not in per_etf_results:
+            continue
+        res = per_etf_results[code]
+        dates = dates_meta.get(code, [])
+        has_weight = code in ETFS_WITH_WEIGHT
+        display = ETF_DISPLAY[code]
+        html.append('<details class="etf-section">')
+        date_info = ''
+        if dates:
+            date_info = f' — 最近交易日:{dates[0]} ~ {dates[-1]} ({len(dates)} 天可用)'
+        else:
+            date_info = ' — 無資料'
+        html.append(f'<summary>{display}{date_info}</summary>')
+        for w in WINDOWS:
+            html.append(render_block(
+                f'最近 {w} 個交易日 — 斜率正最大 Top {TOP_N}',
+                res[w]['pos_sh'], res[w]['pos_wt'], has_weight, 'pos'))
+            html.append(render_block(
+                f'最近 {w} 個交易日 — 斜率負最大 Top {TOP_N}',
+                res[w]['neg_sh'], res[w]['neg_wt'], has_weight, 'neg'))
+        html.append('</details>')
+
+    # ── Combined ETF section (collapsible, 僅股數) ──
+    if combined_results:
+        dates = dates_meta.get('combined', [])
+        html.append('<details class="etf-section">')
+        date_info = ''
+        if dates:
+            date_info = f' — 合計後交易日:{dates[0]} ~ {dates[-1]} ({len(dates)} 天可用)'
+        else:
+            date_info = ' — 無資料'
+        html.append(f'<summary>跨 5 ETF 合計 (僅股數){date_info}</summary>')
+        for w in WINDOWS:
+            html.append(render_block(
+                f'最近 {w} 個交易日 — 合計股數斜率正最大 Top {TOP_N}',
+                combined_results[w]['pos_sh'], [], False, 'pos'))
+            html.append(render_block(
+                f'最近 {w} 個交易日 — 合計股數斜率負最大 Top {TOP_N}',
+                combined_results[w]['neg_sh'], [], False, 'neg'))
+        html.append('</details>')
+
+    html.append('<hr><p class="meta">Generated by analyze.py · data: SQLite daily_holdings</p>')
+    html.append('</body></html>')
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_text('\n'.join(html), encoding='utf-8')
+
+# ── Main ─────────────────────────────────────────
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--db', required=True, help='path to etf_data.db')
+    p.add_argument('--out', required=True, help='output HTML path')
+    args = p.parse_args()
+
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f'[FATAL] DB not found: {db_path}', file=sys.stderr)
+        sys.exit(1)
+
+    print(f'[1] Opening {db_path}')
+    con = sqlite3.connect(str(db_path))
+
+    per_etf_results = {}
+    dates_meta = {}
+    for code in ALL_ETFS:
+        print(f'[2] Analyzing {code}...')
+        history, dates = fetch_etf_history(con, code)
+        dates_meta[code] = dates
+        has_weight = code in ETFS_WITH_WEIGHT
+        per_etf_results[code] = analyze_view(history, dates, has_weight)
+        print(f'    dates available: {len(dates)} ({dates[0] if dates else "-"} ~ {dates[-1] if dates else "-"})')
+
+    print('[3] Analyzing combined (sum across 5 ETFs)...')
+    comb_history, comb_dates = fetch_combined_history(con)
+    dates_meta['combined'] = comb_dates
+    combined_results = analyze_view(comb_history, comb_dates, has_weight=False)
+    print(f'    dates available: {len(comb_dates)} ({comb_dates[0] if comb_dates else "-"} ~ {comb_dates[-1] if comb_dates else "-"})')
+
+    print(f'[4] Rendering HTML → {args.out}')
+    render_html(per_etf_results, combined_results, dates_meta, args.out)
+    con.close()
+    print('[OK]')
+
+if __name__ == '__main__':
+    main()
