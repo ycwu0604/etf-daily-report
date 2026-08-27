@@ -11,7 +11,7 @@ ETF 持股斜率分析 — 給 GitHub Pages 用
 - 斜率 = (最後一日值 − 第一日值) / N,N = window 內資料點數(3/5/10)
 - 股數單位 = 張 (1 張 = 1000 股);權重單位 = %
 - 資料點不足(<2 個交易日有該股)時,該 row 留空白
-- 有 weight_pct 的 ETF 顯示 張數 + 權重 兩個 metric;沒有的(00982A/00992A)只顯示 張數
+- 有 weight_pct 的 ETF 顯示 張數 + 權重 兩個 metric;5 支 ETF 全都有 weight_pct
 - 跨 ETF 合計:sum(shares) by stock_code;weight 跨 ETF 加總無意義(需股價),故只顯示合計 張數
 - HTML 純 f-string,零外部依賴
 
@@ -30,7 +30,8 @@ from pathlib import Path
 
 # ── 設定 ─────────────────────────────────────────────
 ALL_ETFS = ['49YTW', '63YTW', '00982A', '00992A', '00991A']
-ETFS_WITH_WEIGHT = {'49YTW', '63YTW', '00991A'}   # Ezmoney + Fuhwa 有 weight_pct
+# Ezmoney + Fuhwa 本來就有 weight_pct;Capital (00982A/00992A) 從 API 讀 weight 補上
+ETFS_WITH_WEIGHT = {'49YTW', '63YTW', '00982A', '00992A', '00991A'}
 # 內部代碼 → 對外代號 (Ezmoney 49YTW/63YTW 是內部碼,Capital/Fuhwa 已是對外)
 ETF_DISPLAY = {'49YTW': '00981A', '63YTW': '00403A',
                '00982A': '00982A', '00992A': '00992A', '00991A': '00991A'}
