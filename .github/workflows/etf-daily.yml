@@ -11,6 +11,8 @@ on:
 permissions:
   contents: write
   deployments: write
+  pages: write          # GitHub Pages deploy 所需
+  id-token: write       # OIDC token 所需
 
 jobs:
   build:
@@ -94,6 +96,12 @@ jobs:
           python gen_html_report.py
 
       # ═══════════════════════════════════════════════════════
+      # Step 5.5: 斜率分析 → docs/index.html (給 GitHub Pages)
+      # ═══════════════════════════════════════════════════════
+      - name: Generate slope analysis HTML
+        run: python analyze.py --db Ezmoney/etf_data.db --out docs/index.html
+
+      # ═══════════════════════════════════════════════════════
       # Step 6: 上傳更新後的 DB 到 R2
       # ═══════════════════════════════════════════════════════
       - name: Upload DB to R2
@@ -146,3 +154,23 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+
+  # ═══════════════════════════════════════════════════════
+  # Deploy to GitHub Pages (斜率分析 index.html)
+  # 跟 CF Pages 並行,各自服務不同內容
+  # 第一次部署前: repo Settings → Pages → Source 設成「GitHub Actions」
+  # ═══════════════════════════════════════════════════════
+  deploy-gh-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4
