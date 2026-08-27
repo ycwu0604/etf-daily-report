@@ -3,15 +3,16 @@ ETF 持股斜率分析 — 給 GitHub Pages 用
 =====================================
 
 從 SQLite (daily_holdings) 讀 5 支 ETF 持股,計算最近 N 個交易日的
-「股數 / 權重」線性回歸斜率,排序出正負 Top 5。
+「張數 / 權重」首尾差斜率,排序出正負 Top 5。
 
 設計原則
 --------
 - 不做 I/O:不吃 R2、不打 API;只讀 --db 給的本地 SQLite
-- 斜率 = 線性回歸斜率 (least squares),穩健於單日 spike
+- 斜率 = (最後一日值 − 第一日值) / N,N = window 內資料點數(3/5/10)
+- 股數單位 = 張 (1 張 = 1000 股);權重單位 = %
 - 資料點不足(<2 個交易日有該股)時,該 row 留空白
-- 有 weight_pct 的 ETF 顯示 shares + weight 兩個 metric;沒有的(00982A/00992A)只顯示 shares
-- 跨 ETF 合計:sum(shares) by stock_code;weight 跨 ETF 加總無意義(需股價),故只顯示合計 shares
+- 有 weight_pct 的 ETF 顯示 張數 + 權重 兩個 metric;沒有的(00982A/00992A)只顯示 張數
+- 跨 ETF 合計:sum(shares) by stock_code;weight 跨 ETF 加總無意義(需股價),故只顯示合計 張數
 - HTML 純 f-string,零外部依賴
 
 用法
@@ -39,28 +40,25 @@ TOP_N = 5
 # ── 斜率計算 ─────────────────────────────────────────
 def linear_slope(points):
     """
-    Linear regression slope (least squares).
-    points: [(x, y), ...] where x is numeric (date index 0..n-1)
-    Returns None if < 2 points or all xs are equal.
+    首尾差斜率 (simple first-last difference):
+        slope = (last_y - first_y) / N
+    其中 N = 資料點數 (window size,例如 3/5/10)。
+
+    points: [(x, y), ...] — x 為交易日 index (0..n-1),y 為該日數值
+            (張數已除 1000,權重為 %)
+    Returns None if < 2 points。
     """
     if not points or len(points) < 2:
         return None
-    n = len(points)
-    xs = [p[0] for p in points]
-    ys = [p[1] for p in points]
-    x_mean = sum(xs) / n
-    y_mean = sum(ys) / n
-    num = sum((xs[i] - x_mean) * (ys[i] - y_mean) for i in range(n))
-    den = sum((xs[i] - x_mean) ** 2 for i in range(n))
-    if den == 0:
-        return None
-    return num / den
+    first_y = points[0][1]
+    last_y = points[-1][1]
+    return (last_y - first_y) / len(points)
 
 # ── DB 查詢 ─────────────────────────────────────────
 def fetch_etf_history(db, fund_code):
     """
-    回傳 [(date, stock_code, stock_name, shares, weight_pct)] 給定 ETF,
-    按日期升冪排序。只取最近 MAX(WINDOWS) 個交易日 (夠用即可)。
+    回傳 [(date, stock_code, stock_name, lots, weight_pct)] 給定 ETF,
+    按日期升冪排序。lots = shares / 1000 (張)。只取最近 MAX(WINDOWS) 個交易日。
     """
     max_w = max(WINDOWS)
     rows = db.execute('''
@@ -70,8 +68,13 @@ def fetch_etf_history(db, fund_code):
         ORDER BY date DESC
         LIMIT 10000
     ''', (fund_code,)).fetchall()
-    # Reverse to ascending
-    rows = list(reversed(rows))
+    # Reverse to ascending,並把 shares (股) → lots (張,1 張 = 1000 股)
+    rows = [
+        (r[0], r[1], r[2],
+         (r[3] / 1000.0) if r[3] is not None else None,
+         r[4])
+        for r in reversed(rows)
+    ]
     # 取最近 max_w 個交易日
     dates = sorted({r[0] for r in rows}, reverse=True)[:max_w]
     dates = sorted(dates)
@@ -80,8 +83,9 @@ def fetch_etf_history(db, fund_code):
 
 def fetch_combined_history(db):
     """
-    回傳 [(date, stock_code, stock_name, total_shares)] 跨所有 ETF 加總。
-    按 (date, stock_code) 加總 shares。股票名稱取最短的(避免「國巨」/「國巨*」/「國巨股份」混用)。
+    回傳 [(date, stock_code, stock_name, total_lots)] 跨所有 ETF 加總。
+    按 (date, stock_code) 加總 shares (再除 1000 轉 張)。股票名稱取最短
+    (避免「國巨」/「國巨*」/「國巨股份」混用)。
     """
     max_w = max(WINDOWS)
     rows = db.execute('''
@@ -96,6 +100,12 @@ def fetch_combined_history(db):
         GROUP BY date, stock_code
         ORDER BY date DESC
     ''').fetchall()
+    # shares (股) → lots (張,1 張 = 1000 股)
+    rows = [
+        (r[0], r[1], r[2],
+         (r[3] / 1000.0) if r[3] is not None else None)
+        for r in rows
+    ]
     dates = sorted({r[0] for r in rows}, reverse=True)[:max_w]
     dates = sorted(dates)  # 升冪,跟 per-ETF 一致
     dates_set = set(dates)
@@ -200,8 +210,8 @@ def render_dense_summary(per_etf_results, combined_results):
         return per_etf_results.get(g, {}).get(w, {}).get(key, [])
 
     sections = [
-        ('股數斜率 (+)', 'pos_sh'),
-        ('股數斜率 (−)', 'neg_sh'),
+        ('張數斜率 (+)', 'pos_sh'),
+        ('張數斜率 (−)', 'neg_sh'),
         ('權重斜率 (+)', 'pos_wt'),
         ('權重斜率 (−)', 'neg_wt'),
     ]
@@ -273,8 +283,8 @@ def render_etf_summary(label, res, has_weight):
     html.append('  <div class="summary-grids">')
 
     sub_grids = [
-        ('股數斜率 ▲', 'pos_sh', 'pos'),
-        ('股數斜率 ▼', 'neg_sh', 'neg'),
+        ('張數斜率 ▲', 'pos_sh', 'pos'),
+        ('張數斜率 ▼', 'neg_sh', 'neg'),
     ]
     if has_weight:
         sub_grids += [
@@ -322,15 +332,15 @@ def fmt_slope(v, kind='shares'):
     if v is None:
         return '<span class="muted">—</span>'
     if kind == 'shares':
-        # shares/day
+        # 張/日
         if abs(v) >= 1000:
-            return f'{v:+,.0f}/日'
+            return f'{v:+,.0f} 張/日'
         elif abs(v) >= 1:
-            return f'{v:+,.2f}/日'
+            return f'{v:+,.2f} 張/日'
         else:
-            return f'{v:+,.4f}/日'
+            return f'{v:+,.4f} 張/日'
     else:
-        # weight %/day
+        # weight %/日
         return f'{v:+.3f}%/日'
 
 def render_block(title, shares_rows, weight_rows, has_weight, direction):
@@ -339,9 +349,9 @@ def render_block(title, shares_rows, weight_rows, has_weight, direction):
     arrow = '▲' if direction == 'pos' else '▼'
     html = [f'<div class="block">']
     html.append(f'  <h3 class="{dir_class}">{arrow} {title}</h3>')
-    # Shares table
+    # Shares table (張數斜率)
     html.append('  <table class="t">')
-    html.append('    <thead><tr><th colspan="4">股數斜率</th></tr>')
+    html.append('    <thead><tr><th colspan="4">張數斜率</th></tr>')
     html.append('    <tr><th>#</th><th>代號</th><th>名稱</th><th>斜率</th></tr></thead>')
     html.append('    <tbody>')
     if not shares_rows:
@@ -493,13 +503,13 @@ def render_html(per_etf_results, combined_results, dates_meta, output_path):
             date_info = f' — 合計後交易日:{dates[0]} ~ {dates[-1]} ({len(dates)} 天可用)'
         else:
             date_info = ' — 無資料'
-        html.append(f'<summary>跨 5 ETF 合計 (僅股數){date_info}</summary>')
+        html.append(f'<summary>跨 5 ETF 合計 (僅張數){date_info}</summary>')
         for w in WINDOWS:
             html.append(render_block(
-                f'最近 {w} 個交易日 — 合計股數斜率正最大 Top {TOP_N}',
+                f'最近 {w} 個交易日 — 合計張數斜率正最大 Top {TOP_N}',
                 combined_results[w]['pos_sh'], [], False, 'pos'))
             html.append(render_block(
-                f'最近 {w} 個交易日 — 合計股數斜率負最大 Top {TOP_N}',
+                f'最近 {w} 個交易日 — 合計張數斜率負最大 Top {TOP_N}',
                 combined_results[w]['neg_sh'], [], False, 'neg'))
         html.append('</details>')
 
