@@ -31,6 +31,9 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       # 從 R2 拿最新 DB(由 etf-daily.yml 維護)
       - name: Download DB from R2
         run: |
