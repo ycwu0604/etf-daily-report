@@ -543,7 +543,7 @@ table.card-table td .nm {
 table.card-table td.pos { color: #c62828; }
 table.card-table td.neg { color: #1565c0; }
 table.card-table td.muted { color: #aaa; font-weight: normal; }
-table.card-table tbody tr:nth-child(even) td:not(.rank) { background: #fafafa; }
+table.card-table tbody tr:nth-child(even) td:not(.rank):not(.new-add):not(.new-remove) { background: #fafafa; }
 
 /* 1 日視窗:新增(+∞)粉紅底、消失(−∞)淡綠底 */
 table.card-table td.new-add {
@@ -613,7 +613,7 @@ details.etf-section[open] { background: #fafafa; padding-bottom: 1em; }
   table.card-table tr.section-header th { background: #2a3a5e; color: #c0d0f0; }
   table.card-table td.rank { background: #333; color: #aaa; }
   table.card-table td .nm { color: #aaa; }
-  table.card-table tbody tr:nth-child(even) td:not(.rank) { background: #222; }
+  table.card-table tbody tr:nth-child(even) td:not(.rank):not(.new-add):not(.new-remove) { background: #222; }
   table.card-table td.new-add { background: #4a2c35; color: #f8bbd0; }
   table.card-table td.new-remove { background: #2c4a32; color: #c8e6c9; }
 }"""
