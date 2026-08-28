@@ -67,12 +67,12 @@ jobs:
         continue-on-error: true
 
       # ═══════════════════════════════════════════════════════
-      # Step 3: Capital — API 取得持股 → 寫入 DB (--force 回填 weight_pct)
+      # Step 3: Capital — API 取得持股 → 寫入 DB
       # ═══════════════════════════════════════════════════════
-      - name: Capital pipeline (API → DB, force overwrite weight)
+      - name: Capital pipeline (API → DB)
         run: |
           cd Capital
-          python run_daily.py --force
+          python run_daily.py
         continue-on-error: true
 
       # ═══════════════════════════════════════════════════════
