@@ -118,10 +118,12 @@ def fetch_combined_history(db):
 # ── 分析: 給定一個 (date -> {stock -> (name, shares, weight)}) 的 view ──
 def _detect_daily_changes(history, all_dates, has_weight):
     """
-    1 日視窗:比較最新日 vs 前一日的 set 差集。
+    1 日視窗:比較最新日 vs 前一日,偵測所有股數變動。
       - 新增(在最新日、不在前一日) → slope = +∞ (粉紅)
       - 消失(在前一日、不在最新日) → slope = −∞ (淡綠)
-    排序:以當下股數(新增)或最後股數(消失)由大到小,取 Top N。
+      - 既有股數增加 → slope = (latest - prev) / 1 = delta (張/日)
+      - 既有股數減少 → slope = (latest - prev) / 1 = delta (張/日,負值)
+    排序:∞ 排最前,其餘按斜率由大到小(pos)/由小到大(neg)。
     """
     if len(all_dates) < 2:
         return [], [], [], []
@@ -144,47 +146,90 @@ def _detect_daily_changes(history, all_dates, has_weight):
     prev_codes = set(pivot.get(prev, {}).keys())
     added = latest_codes - prev_codes
     removed = prev_codes - latest_codes
+    existing = latest_codes & prev_codes
 
     INF = float('inf')
 
     # 4-tuple 格式: (code, name, slope_sh, slope_wt)
-    # 1 日視窗 idx 2 放 INF/−INF(給 render_dense_summary 偵測 + 套 new-add/new-remove 樣式)
-    # idx 3 也放同值(給 render_block 的 fmt_slope 顯示「新增/退出」)
 
-    # pos_sh: 新增,排序用「最新日股數」
+    # ── pos_sh: 股數增加(新增 +∞ 排最前,其次按 delta 降冪) ──
     pos_sh = []
     for c in added:
         nm, sh, _ = info(latest, c)
         if sh is not None:
-            pos_sh.append((c, nm, sh, INF))
-    pos_sh.sort(key=lambda r: -r[2])
-    pos_sh = [(r[0], r[1], INF, INF) for r in pos_sh[:TOP_N]]
+            pos_sh.append((c, nm, INF, INF))
+    for c in existing:
+        nm, sh_l, wt_l = info(latest, c)
+        _, sh_p, _ = info(prev, c)
+        if sh_l is not None and sh_p is not None:
+            delta = sh_l - sh_p
+            if delta > 0:
+                delta_wt = None
+                if wt_l is not None:
+                    _, _, wt_p = info(prev, c)
+                    if wt_p is not None:
+                        delta_wt = wt_l - wt_p
+                pos_sh.append((c, nm, delta, delta_wt))
+    # 排序:∞ 排最前,其餘按 slope 降冪
+    pos_sh.sort(key=lambda r: (0 if r[2] == INF else 1,
+                               0 if r[2] == INF else -r[2]))
+    pos_sh = pos_sh[:TOP_N]
 
-    # neg_sh: 消失,排序用「前一日股數」
+    # ── neg_sh: 股數減少(消失 −∞ 排最前,其次按 delta 升冪) ──
     neg_sh = []
     for c in removed:
         nm, sh, _ = info(prev, c)
         if sh is not None:
-            neg_sh.append((c, nm, sh, -INF))
-    neg_sh.sort(key=lambda r: -r[2])
-    neg_sh = [(r[0], r[1], -INF, -INF) for r in neg_sh[:TOP_N]]
+            neg_sh.append((c, nm, -INF, -INF))
+    for c in existing:
+        nm, sh_l, wt_l = info(latest, c)
+        _, sh_p, _ = info(prev, c)
+        if sh_l is not None and sh_p is not None:
+            delta = sh_l - sh_p
+            if delta < 0:
+                delta_wt = None
+                if wt_l is not None:
+                    _, _, wt_p = info(prev, c)
+                    if wt_p is not None:
+                        delta_wt = wt_l - wt_p
+                neg_sh.append((c, nm, delta, delta_wt))
+    # 排序:−∞ 排最前,其餘按 slope 升冪(最負在前)
+    neg_sh.sort(key=lambda r: (0 if r[2] == -INF else 1,
+                               0 if r[2] == -INF else r[2]))
+    neg_sh = neg_sh[:TOP_N]
 
-    # pos_wt / neg_wt — 僅有 weight 的 ETF/combined
+    # ── pos_wt / neg_wt — 僅有 weight 的 ETF ──
     pos_wt, neg_wt = [], []
     if has_weight:
         for c in added:
             nm, _, wt = info(latest, c)
             if wt is not None:
-                pos_wt.append((c, nm, wt, INF))
-        pos_wt.sort(key=lambda r: -r[2])
-        pos_wt = [(r[0], r[1], INF, INF) for r in pos_wt[:TOP_N]]
+                pos_wt.append((c, nm, INF, INF))
+        for c in existing:
+            nm, _, wt_l = info(latest, c)
+            _, _, wt_p = info(prev, c)
+            if wt_l is not None and wt_p is not None:
+                delta = wt_l - wt_p
+                if delta > 0:
+                    pos_wt.append((c, nm, delta, delta))
+        pos_wt.sort(key=lambda r: (0 if r[2] == INF else 1,
+                                   0 if r[2] == INF else -r[2]))
+        pos_wt = pos_wt[:TOP_N]
 
         for c in removed:
             nm, _, wt = info(prev, c)
             if wt is not None:
-                neg_wt.append((c, nm, wt, -INF))
-        neg_wt.sort(key=lambda r: -r[2])
-        neg_wt = [(r[0], r[1], -INF, -INF) for r in neg_wt[:TOP_N]]
+                neg_wt.append((c, nm, -INF, -INF))
+        for c in existing:
+            nm, _, wt_l = info(latest, c)
+            _, _, wt_p = info(prev, c)
+            if wt_l is not None and wt_p is not None:
+                delta = wt_l - wt_p
+                if delta < 0:
+                    neg_wt.append((c, nm, delta, delta))
+        neg_wt.sort(key=lambda r: (0 if r[2] == -INF else 1,
+                                   0 if r[2] == -INF else r[2]))
+        neg_wt = neg_wt[:TOP_N]
 
     return pos_sh, neg_sh, pos_wt, neg_wt
 
