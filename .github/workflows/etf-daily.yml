@@ -4,6 +4,7 @@ on:
   # 每天 18:00 和 24:00 台北時間 (UTC+8 = 10:00 和 16:00 UTC)
   schedule:
     - cron: '0 11 * * 1-5'   # 週一到週五 台北 19:00
+    - cron: '30 11 * * 1-5'  # 週一到週五 台北 19:30
     - cron: '0 16 * * 1-5'   # 週一到週五 台北 24:00
   # 手動觸發 — Actions 頁面按 Run workflow
   workflow_dispatch:
@@ -92,6 +93,31 @@ jobs:
         run: |
           python gen_combined_report.py
           python gen_html_report.py
+
+      # ═══════════════════════════════════════════════════════
+      # Step 5.5: 抓取股價 + 技術分析
+      # ═══════════════════════════════════════════════════════
+      - name: Fetch stock prices (Yahoo Finance)
+        run: python fetch_prices.py --db Ezmoney/etf_data.db
+        timeout-minutes: 10
+
+      - name: Generate TA report
+        run: python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
+        timeout-minutes: 5
+
+      - name: Push reports to GitHub Pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/ta_report.html
+          if git diff --cached --quiet; then
+            echo "No changes to push"
+          else
+            git commit -m "Update TA report ($(date +%Y-%m-%d))"
+            git push
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ═══════════════════════════════════════════════════════
       # Step 6: 上傳更新後的 DB 到 R2
