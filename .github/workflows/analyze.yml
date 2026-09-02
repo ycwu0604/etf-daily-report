@@ -49,6 +49,15 @@ jobs:
       - name: Generate slope analysis HTML
         run: python analyze.py --db Ezmoney/etf_data.db --out docs/index.html
 
+      # 抓股價 + 技術分析 → docs/ta_report.html
+      - name: Fetch stock prices
+        run: python fetch_prices.py --db Ezmoney/etf_data.db
+        timeout-minutes: 10
+
+      - name: Generate TA report
+        run: python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
+        timeout-minutes: 5
+
       # 把 docs/ 上傳成 GH Pages artifact(必須在 build job 跑,因 deploy job 重新 checkout 拿不到 docs/)
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
