@@ -108,7 +108,6 @@ def render_stock_row(code: str, name: str, result: dict) -> str:
     if result is None:
         return (f'<tr><td class="code">{code}</td><td>{name}</td>'
                 f'<td colspan="5" class="muted">(資料不足)</td></tr>')
-
     stage = result['stage']
     direction = result['direction']
     score = result['score']
@@ -120,10 +119,11 @@ def render_stock_row(code: str, name: str, result: dict) -> str:
     return f'''<tr>
   <td class="code">{code}</td>
   <td>{name}</td>
+  <td>{fmt_val(sig['close'], '{:.2f}')}</td>
   <td><span class="stage" style="background:{bg};color:{tc}">{stage}</span></td>
   <td style="color:{dc}">{DIR_LABEL[direction]}</td>
   <td>{score:+.2f}</td>
-  <td class="ind">RSI {sig['rsi14']:.0f} · MACD {fmt_val(sig['macd_hist'])} · MA20 {fmt_val(sig['ma20'], '{{:.2f}}')}</td>
+  <td class="ind">RSI {sig['rsi14']:.0f} · MACD {fmt_val(sig['macd_hist'])} · MA20 {fmt_val(sig['ma20'], '{:.2f}')}</td>
 </tr>'''
 
 
@@ -136,13 +136,13 @@ def render_etf_tab(etf_code: str, pos_results: list, neg_results: list) -> str:
     html.append('<div class="section">')
     html.append('<h3 class="pos-title">▲ 斜率正候選</h3>')
     html.append('<table class="ta-table">')
-    html.append('<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>')
+    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>')
     html.append('<tbody>')
     if pos_results:
         for code, name, result in pos_results:
             html.append(render_stock_row(code, name, result))
     else:
-        html.append('<tr><td colspan="6" class="muted">(無候選)</td></tr>')
+        html.append('<tr><td colspan="7" class="muted">(無候選)</td></tr>')
     html.append('</tbody></table>')
     html.append('</div>')
 
@@ -150,13 +150,13 @@ def render_etf_tab(etf_code: str, pos_results: list, neg_results: list) -> str:
     html.append('<div class="section">')
     html.append('<h3 class="neg-title">▼ 斜率負候選</h3>')
     html.append('<table class="ta-table">')
-    html.append('<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>')
+    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>')
     html.append('<tbody>')
     if neg_results:
         for code, name, result in neg_results:
             html.append(render_stock_row(code, name, result))
     else:
-        html.append('<tr><td colspan="6" class="muted">(無候選)</td></tr>')
+        html.append('<tr><td colspan="7" class="muted">(無候選)</td></tr>')
     html.append('</tbody></table>')
     html.append('</div>')
 
