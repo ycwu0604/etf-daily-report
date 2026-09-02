@@ -58,12 +58,26 @@ def init_prices_table(con: sqlite3.Connection):
 def fetch_stock(session: requests.Session, stock_code: str, verify: bool = True, range_: str = '4mo') -> list[tuple]:
     """
     Fetch OHLCV from Yahoo chart API.
+    Tries .TW first, falls back to .TWO for 4-digit codes (OTC stocks).
     Returns list of (date_str, open, high, low, close, volume) tuples.
     """
-    ticker = to_yahoo_ticker(stock_code)
-    if not ticker:
+    # Build candidate tickers: 4-digit → try .TW then .TWO; 9-digit → .TWO
+    if len(stock_code) == 4:
+        tickers = [f"{stock_code}.TW", f"{stock_code}.TWO"]
+    elif len(stock_code) == 9:
+        tickers = [f"{stock_code}.TWO"]
+    else:
         return []
 
+    for ticker in tickers:
+        rows = _fetch_ticker(session, stock_code, ticker, verify, range_)
+        if rows:
+            return rows
+    return []
+
+
+def _fetch_ticker(session: requests.Session, stock_code: str, ticker: str, verify: bool, range_: str) -> list[tuple]:
+    """Fetch single ticker. Returns [] on failure."""
     params = {'range': range_, 'interval': '1d'}
     try:
         r = session.get(
@@ -74,7 +88,7 @@ def fetch_stock(session: requests.Session, stock_code: str, verify: bool = True,
             verify=verify,
         )
         if r.status_code == 429:
-            print(f'  [429] {stock_code}: rate limited, waiting 10s...')
+            print(f'  [429] {stock_code} ({ticker}): rate limited, waiting 10s...')
             time.sleep(10)
             r = session.get(
                 YAHOO_CHART_URL.format(ticker=ticker),
@@ -84,10 +98,12 @@ def fetch_stock(session: requests.Session, stock_code: str, verify: bool = True,
                 verify=verify,
             )
         if r.status_code != 200:
-            print(f'  [HTTP {r.status_code}] {stock_code} ({ticker})')
             return []
 
         data = r.json()
+        if 'chart' not in data or 'result' not in data['chart'] or not data['chart']['result']:
+            return []
+
         result = data['chart']['result'][0]
         timestamps = result['timestamp']
         quote = result['indicators']['quote'][0]
