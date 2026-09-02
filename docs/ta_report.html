@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ETF 持股技術分析</title>
+<style>
+:root { color-scheme: light dark; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+       max-width: 1100px; margin: 1.5em auto; padding: 0 1em; line-height: 1.6; }
+h1 { font-size: 1.6em; border-bottom: 2px solid #888; padding-bottom: .3em; }
+.meta { color: #555; font-size: .9em; }
+.muted { color: #888; font-style: italic; }
+.ind { font-size: .85em; color: #555; }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; margin: 1em 0 0; border-bottom: 2px solid #ccc; }
+.tab-btn {
+  padding: .5em 1.2em; border: none; background: #f0f0f0;
+  cursor: pointer; font-size: .95em; border-radius: 6px 6px 0 0;
+  border: 1px solid #ccc; border-bottom: none; margin-right: .3em;
+}
+.tab-btn:hover { background: #e0e0e0; }
+.tab-btn.active { background: #fff; font-weight: 700; border-bottom: 2px solid #fff; margin-bottom: -2px; }
+.tab-content { display: none; padding: 1em .5em; }
+.tab-content.active { display: block; }
+
+/* Sections */
+.section { margin: 1.5em 0; }
+.pos-title { color: #c62828; border-left: 4px solid #c62828; padding-left: .5em; }
+.neg-title { color: #1565c0; border-left: 4px solid #1565c0; padding-left: .5em; }
+
+/* Table */
+.ta-table { width: 100%; border-collapse: collapse; margin-top: .5em; }
+.ta-table th { background: #f5f5f5; padding: .4em .6em; text-align: left; font-size: .88em;
+               border-bottom: 2px solid #ddd; }
+.ta-table td { padding: .4em .6em; border-bottom: 1px solid #eee; font-size: .92em; }
+.ta-table .code { font-weight: 700; white-space: nowrap; }
+.stage {
+  display: inline-block; padding: .15em .5em; border-radius: 4px;
+  font-size: .85em; font-weight: 600; white-space: nowrap;
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+  body { background: #1a1a1a; color: #ddd; }
+  h1 { border-color: #555; }
+  .meta, .ind { color: #999; }
+  .tab-btn { background: #2a2a2a; color: #ccc; border-color: #444; }
+  .tab-btn:hover { background: #333; }
+  .tab-btn.active { background: #1a1a1a; border-bottom: 2px solid #1a1a1a; }
+  .ta-table th { background: #2a2a2a; color: #ccc; border-color: #444; }
+  .ta-table td { border-color: #333; }
+}
+</style>
+</head><body>
+<h1>ETF 持股技術分析</h1>
+<p class="meta">產出時間: 2026-09-02 08:25 · 候選來源: 斜率 Top5 (1/3/5/10日) 去重</p>
+<div class="tabs">
+  <button class="tab-btn active" data-tab="tab-49YTW">00981A</button>
+  <button class="tab-btn" data-tab="tab-63YTW">00403A</button>
+  <button class="tab-btn" data-tab="tab-00982A">00982A</button>
+  <button class="tab-btn" data-tab="tab-00992A">00992A</button>
+  <button class="tab-btn" data-tab="tab-00991A">00991A</button>
+</div>
+<div class="tab-content" id="tab-49YTW">
+<div class="section">
+<h3 class="pos-title">▲ 斜率正候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr>
+  <td class="code">4958</td>
+  <td>臻鼎-KY</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 55 · MACD +9.28 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">6515</td>
+  <td>穎崴</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.88</td>
+  <td class="ind">RSI 58 · MACD +101.42 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2454</td>
+  <td>聯發科</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.88</td>
+  <td class="ind">RSI 61 · MACD +40.77 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">6669</td>
+  <td>緯穎</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 77 · MACD +38.42 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2345</td>
+  <td>智邦</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 48 · MACD +7.43 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3665</td>
+  <td>貿聯-KY</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.55</td>
+  <td class="ind">RSI 50 · MACD +0.23 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2313</td>
+  <td>華通</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 64 · MACD +4.86 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2449</td>
+  <td>京元電子</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 57 · MACD +5.29 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">6223</td><td>旺矽</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">2383</td>
+  <td>台光電</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-0.68</td>
+  <td class="ind">RSI 49 · MACD -56.71 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">4979</td><td>華星光</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">2308</td>
+  <td>台達電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.05</td>
+  <td class="ind">RSI 45 · MACD +7.98 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3017</td>
+  <td>奇鋐</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 63 · MACD +21.76 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2303</td>
+  <td>聯電</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 50 · MACD +1.93 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3443</td>
+  <td>創意</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 61 · MACD +26.15 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+<div class="section">
+<h3 class="neg-title">▼ 斜率負候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr><td class="code">4979</td><td>華星光</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">3037</td>
+  <td>欣興</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-0.68</td>
+  <td class="ind">RSI 46 · MACD -18.66 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3017</td>
+  <td>奇鋐</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 63 · MACD +21.76 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3653</td>
+  <td>健策</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 66 · MACD +28.98 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2330</td>
+  <td>台積電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 49 · MACD +1.66 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">8046</td>
+  <td>南電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 52 · MACD -0.72 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3711</td>
+  <td>日月光投控</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 47 · MACD +0.59 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">6805</td>
+  <td>富世達</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 59 · MACD +34.03 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2368</td>
+  <td>金像電</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 63 · MACD +27.42 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2303</td>
+  <td>聯電</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 50 · MACD +1.93 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2327</td>
+  <td>國巨*</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 42 · MACD +6.09 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">5274</td><td>信驊</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr><td class="code">6187</td><td>萬潤</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">2383</td>
+  <td>台光電</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-0.68</td>
+  <td class="ind">RSI 49 · MACD -56.71 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+</div>
+<div class="tab-content" id="tab-63YTW">
+<div class="section">
+<h3 class="pos-title">▲ 斜率正候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr>
+  <td class="code">2449</td>
+  <td>京元電子</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 57 · MACD +5.29 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">1303</td>
+  <td>南亞</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 65 · MACD +4.52 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3450</td>
+  <td>聯鈞</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 59 · MACD +7.79 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">1717</td>
+  <td>長興</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 63 · MACD +1.26 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2454</td>
+  <td>聯發科</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.88</td>
+  <td class="ind">RSI 61 · MACD +40.77 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">6669</td>
+  <td>緯穎</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 77 · MACD +38.42 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2345</td>
+  <td>智邦</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 48 · MACD +7.43 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2455</td>
+  <td>全新</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 76 · MACD +12.96 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3008</td>
+  <td>大立光</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 84 · MACD +251.08 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">6223</td><td>旺矽</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">3017</td>
+  <td>奇鋐</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 63 · MACD +21.76 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">6805</td>
+  <td>富世達</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 59 · MACD +34.03 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">6274</td><td>台燿</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">3443</td>
+  <td>創意</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 61 · MACD +26.15 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+<div class="section">
+<h3 class="neg-title">▼ 斜率負候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr>
+  <td class="code">2344</td>
+  <td>華邦電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 53 · MACD -0.02 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2327</td>
+  <td>國巨*</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 42 · MACD +6.09 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2337</td>
+  <td>旺宏</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 47 · MACD +0.31 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3711</td>
+  <td>日月光投控</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 47 · MACD +0.59 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2330</td>
+  <td>台積電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 49 · MACD +1.66 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3037</td>
+  <td>欣興</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-0.68</td>
+  <td class="ind">RSI 46 · MACD -18.66 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3189</td>
+  <td>景碩</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.25</td>
+  <td class="ind">RSI 52 · MACD -2.94 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2303</td>
+  <td>聯電</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 50 · MACD +1.93 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+</div>
+<div class="tab-content" id="tab-00982A">
+<div class="section">
+<h3 class="pos-title">▲ 斜率正候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr><td class="code">6640</td><td>均華</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">6669</td>
+  <td>緯穎</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 77 · MACD +38.42 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2454</td>
+  <td>聯發科</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.88</td>
+  <td class="ind">RSI 61 · MACD +40.77 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">3105</td><td>穩懋</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr><td class="code">3491</td><td>昇達科</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr><td class="code">6488</td><td>環球晶</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">4958</td>
+  <td>臻鼎-KY</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 55 · MACD +9.28 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2455</td>
+  <td>全新</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 76 · MACD +12.96 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">5425</td><td>台半</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">3008</td>
+  <td>大立光</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 84 · MACD +251.08 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2478</td>
+  <td>大毅</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 44 · MACD +1.37 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3090</td>
+  <td>日電貿</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.38</td>
+  <td class="ind">RSI 47 · MACD +3.18 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2428</td>
+  <td>興勤</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.38</td>
+  <td class="ind">RSI 49 · MACD +1.30 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2301</td>
+  <td>光寶科</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 67 · MACD +2.11 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2395</td>
+  <td>研華</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 61 · MACD -2.54 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+<div class="section">
+<h3 class="neg-title">▼ 斜率負候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr>
+  <td class="code">2345</td>
+  <td>智邦</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 48 · MACD +7.43 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2330</td>
+  <td>台積電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 49 · MACD +1.66 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2059</td>
+  <td>川湖</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 66 · MACD -140.30 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3008</td>
+  <td>大立光</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 84 · MACD +251.08 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">6139</td>
+  <td>亞翔</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-1.00</td>
+  <td class="ind">RSI 39 · MACD -3.05 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2303</td>
+  <td>聯電</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 50 · MACD +1.93 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2478</td>
+  <td>大毅</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 44 · MACD +1.37 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">8070</td>
+  <td>長華*</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 53 · MACD +0.16 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2377</td>
+  <td>微星</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 58 · MACD +0.35 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2301</td>
+  <td>光寶科</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 67 · MACD +2.11 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2454</td>
+  <td>聯發科</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.88</td>
+  <td class="ind">RSI 61 · MACD +40.77 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2383</td>
+  <td>台光電</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-0.68</td>
+  <td class="ind">RSI 49 · MACD -56.71 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">3264</td><td>欣銓</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr><td class="code">5536</td><td>聖暉*</td><td colspan="5" class="muted">(資料不足)</td></tr>
+</tbody></table>
+</div>
+</div>
+<div class="tab-content" id="tab-00992A">
+<div class="section">
+<h3 class="pos-title">▲ 斜率正候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr>
+  <td class="code">8046</td>
+  <td>南電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 52 · MACD -0.72 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2345</td>
+  <td>智邦</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 48 · MACD +7.43 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3665</td>
+  <td>貿聯-KY</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.55</td>
+  <td class="ind">RSI 50 · MACD +0.23 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2455</td>
+  <td>全新</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 76 · MACD +12.96 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">6584</td><td>南俊國際</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">3008</td>
+  <td>大立光</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 84 · MACD +251.08 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">6223</td><td>旺矽</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr><td class="code">5289</td><td>宜鼎</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">3017</td>
+  <td>奇鋐</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 63 · MACD +21.76 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">1815</td><td>富喬</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">1303</td>
+  <td>南亞</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 65 · MACD +4.52 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+<div class="section">
+<h3 class="neg-title">▼ 斜率負候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr>
+  <td class="code">3037</td>
+  <td>欣興</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-0.68</td>
+  <td class="ind">RSI 46 · MACD -18.66 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3017</td>
+  <td>奇鋐</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 63 · MACD +21.76 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3008</td>
+  <td>大立光</td>
+  <td><span class="stage" style="background:#c8e6c9;color:#1b5e20">主升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 84 · MACD +251.08 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2059</td>
+  <td>川湖</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 66 · MACD -140.30 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">1303</td>
+  <td>南亞</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 65 · MACD +4.52 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2330</td>
+  <td>台積電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 49 · MACD +1.66 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2454</td>
+  <td>聯發科</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.88</td>
+  <td class="ind">RSI 61 · MACD +40.77 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">8996</td>
+  <td>高力</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 57 · MACD +9.29 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2308</td>
+  <td>台達電</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.05</td>
+  <td class="ind">RSI 45 · MACD +7.98 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+</div>
+<div class="tab-content" id="tab-00991A">
+<div class="section">
+<h3 class="pos-title">▲ 斜率正候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr>
+  <td class="code">2303</td>
+  <td>聯華電子</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 50 · MACD +1.93 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">6669</td>
+  <td>緯穎科技</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+1.00</td>
+  <td class="ind">RSI 77 · MACD +38.42 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2454</td>
+  <td>聯發科技</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.88</td>
+  <td class="ind">RSI 61 · MACD +40.77 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2345</td>
+  <td>智邦科技</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 48 · MACD +7.43 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3189</td>
+  <td>景碩科技</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.25</td>
+  <td class="ind">RSI 52 · MACD -2.94 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">3081</td><td>聯亞光電</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr><td class="code">5274</td><td>信驊科技</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr><td class="code">6223</td><td>旺矽科技</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">3017</td>
+  <td>奇鋐科技</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 63 · MACD +21.76 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3026</td>
+  <td>禾伸堂企</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.68</td>
+  <td class="ind">RSI 52 · MACD +10.77 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">8046</td>
+  <td>南亞電路</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 52 · MACD -0.72 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2408</td>
+  <td>南亞科技</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 56 · MACD -1.36 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+<div class="section">
+<h3 class="neg-title">▼ 斜率負候選</h3>
+<table class="ta-table">
+<thead><tr><th>代號</th><th>名稱</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>
+<tbody>
+<tr>
+  <td class="code">2404</td>
+  <td>漢唐集成</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-1.00</td>
+  <td class="ind">RSI 37 · MACD -1.61 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3037</td>
+  <td>欣興電子</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-0.68</td>
+  <td class="ind">RSI 46 · MACD -18.66 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">3081</td><td>聯亞光電</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">2059</td>
+  <td>川湖科技</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>-0.00</td>
+  <td class="ind">RSI 66 · MACD -140.30 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">3017</td>
+  <td>奇鋐科技</td>
+  <td><span class="stage" style="background:#fff9c4;color:#f57f17">末升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.80</td>
+  <td class="ind">RSI 63 · MACD +21.76 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">6274</td><td>台燿科技</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">2327</td>
+  <td>國巨股份</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 42 · MACD +6.09 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2345</td>
+  <td>智邦科技</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 48 · MACD +7.43 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">2454</td>
+  <td>聯發科技</td>
+  <td><span class="stage" style="background:#e8f5e9;color:#2e7d32">初升</span></td>
+  <td style="color:#c62828">多頭</td>
+  <td>+0.88</td>
+  <td class="ind">RSI 61 · MACD +40.77 · MA20 {:.2f}</td>
+</tr>
+<tr>
+  <td class="code">7769</td>
+  <td>鴻勁精密</td>
+  <td><span class="stage" style="background:#ffebee;color:#c62828">初跌</span></td>
+  <td style="color:#1565c0">空頭</td>
+  <td>-0.80</td>
+  <td class="ind">RSI 38 · MACD -71.27 · MA20 {:.2f}</td>
+</tr>
+<tr><td class="code">6223</td><td>旺矽科技</td><td colspan="5" class="muted">(資料不足)</td></tr>
+<tr>
+  <td class="code">3711</td>
+  <td>日月光投</td>
+  <td><span class="stage" style="background:#eceff1;color:#546e7a">整理</span></td>
+  <td style="color:#757575">整理</td>
+  <td>+0.25</td>
+  <td class="ind">RSI 47 · MACD +0.59 · MA20 {:.2f}</td>
+</tr>
+</tbody></table>
+</div>
+</div>
+
+<script>
+(function () {
+  const btns = document.querySelectorAll('.tab-btn');
+  btns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      btns.forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(btn.dataset.tab).classList.add('active');
+    });
+  });
+})();
+</script>
+
+<hr><p class="meta">Generated by ta_report.py · indicators: MA/MACD/RSI/ATR/BB</p>
+</body></html>
