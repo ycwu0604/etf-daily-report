@@ -178,7 +178,9 @@ h1 { font-size: 1.6em; border-bottom: 2px solid #888; padding-bottom: .3em; }
 .ind { font-size: .85em; color: #555; }
 
 /* Tabs */
-.tabs { display: flex; gap: 0; margin: 1em 0 0; border-bottom: 2px solid #ccc; }
+.tabs { display: flex; gap: 0; margin: 1em 0 0; border-bottom: 2px solid #ccc;
+        overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
 .tab-btn {
   padding: .5em 1.2em; border: none; background: #f0f0f0;
   cursor: pointer; font-size: .95em; border-radius: 6px 6px 0 0;
@@ -240,14 +242,47 @@ h1 { font-size: 1.6em; border-bottom: 2px solid #888; padding-bottom: .3em; }
 TAB_JS = """
 <script>
 (function () {
-  const btns = document.querySelectorAll('.tab-btn');
-  btns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      btns.forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(btn.dataset.tab).classList.add('active');
-    });
+  const btns = Array.from(document.querySelectorAll('.tab-btn'));
+  const contents = Array.from(document.querySelectorAll('.tab-content'));
+  let currentIdx = 0;
+
+  function activate(idx) {
+    currentIdx = Math.max(0, Math.min(idx, btns.length - 1));
+    btns.forEach((b, i) => b.classList.toggle('active', i === currentIdx));
+    contents.forEach((c, i) => c.classList.toggle('active', i === currentIdx));
+    // Scroll active tab button into view
+    btns[currentIdx].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }
+
+  // Tab button clicks
+  btns.forEach((btn, idx) => {
+    btn.addEventListener('click', () => activate(idx));
+  });
+
+  // Touch swipe (left/right)
+  let touchStartX = 0;
+  let touchEndX = 0;
+
+  document.addEventListener('touchstart', (e) => {
+    touchStartX = e.changedTouches[0].screenX;
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    touchEndX = e.changedTouches[0].screenX;
+    const diff = touchStartX - touchEndX;
+    if (Math.abs(diff) > 60) { // minimum swipe distance
+      if (diff > 0) {
+        activate(currentIdx + 1); // swipe left → next
+      } else {
+        activate(currentIdx - 1); // swipe right → prev
+      }
+    }
+  }, { passive: true });
+
+  // Keyboard arrows (desktop)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') activate(currentIdx + 1);
+    if (e.key === 'ArrowLeft') activate(currentIdx - 1);
   });
 })();
 </script>
