@@ -84,17 +84,17 @@ def analyze_stock(con: sqlite3.Connection, stock_code: str) -> dict | None:
 
 # ── HTML Rendering ──────────────────────────────────────────
 STAGE_COLORS = {
-    '初升': '#e8f5e9', '主升': '#c8e6c9', '末升': '#fff9c4',
-    '初跌': '#ffebee', '主跌': '#ffcdd2', '末跌': '#f3e5f5',
+    '初升': '#fce4ec', '主升': '#ffcdd2', '末升': '#ffebee',
+    '初跌': '#e8f5e9', '主跌': '#c8e6c9', '末跌': '#f1f8e9',
     '整理': '#eceff1',
 }
 STAGE_TEXT = {
-    '初升': '#2e7d32', '主升': '#1b5e20', '末升': '#f57f17',
-    '初跌': '#c62828', '主跌': '#b71c1c', '末跌': '#6a1b9a',
+    '初升': '#ad1457', '主升': '#b71c1c', '末升': '#e57373',
+    '初跌': '#4caf50', '主跌': '#1b5e20', '末跌': '#81c784',
     '整理': '#546e7a',
 }
 DIR_LABEL = {'bullish': '多頭', 'bearish': '空頭', 'neutral': '整理'}
-DIR_COLOR = {'bullish': '#c62828', 'bearish': '#1565c0', 'neutral': '#757575'}
+DIR_COLOR = {'bullish': '#c62828', 'bearish': '#2e7d32', 'neutral': '#757575'}
 
 
 def fmt_val(v, fmt='{:+.2f}'):
@@ -250,7 +250,6 @@ TAB_JS = """
     currentIdx = Math.max(0, Math.min(idx, btns.length - 1));
     btns.forEach((b, i) => b.classList.toggle('active', i === currentIdx));
     contents.forEach((c, i) => c.classList.toggle('active', i === currentIdx));
-    // Scroll active tab button into view
     btns[currentIdx].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }
 
@@ -259,23 +258,30 @@ TAB_JS = """
     btn.addEventListener('click', () => activate(idx));
   });
 
-  // Touch swipe (left/right)
-  let touchStartX = 0;
-  let touchEndX = 0;
+  // Touch swipe - track direction on touchmove, fire on touchend
+  let startX = 0, startY = 0, isHorizontal = false;
 
   document.addEventListener('touchstart', (e) => {
-    touchStartX = e.changedTouches[0].screenX;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    isHorizontal = false;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    // Lock to horizontal if horizontal movement dominates early
+    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      isHorizontal = true;
+    }
   }, { passive: true });
 
   document.addEventListener('touchend', (e) => {
-    touchEndX = e.changedTouches[0].screenX;
-    const diff = touchStartX - touchEndX;
-    if (Math.abs(diff) > 60) { // minimum swipe distance
-      if (diff > 0) {
-        activate(currentIdx + 1); // swipe left → next
-      } else {
-        activate(currentIdx - 1); // swipe right → prev
-      }
+    if (!isHorizontal) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    if (Math.abs(dx) > 50) {
+      if (dx < 0) activate(currentIdx + 1);  // swipe left → next
+      else activate(currentIdx - 1);         // swipe right → prev
     }
   }, { passive: true });
 
