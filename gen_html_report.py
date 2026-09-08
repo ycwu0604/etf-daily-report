@@ -348,7 +348,7 @@ body {{ font-family:"Noto Sans TC","Segoe UI",system-ui,sans-serif; background:v
 .panel.active {{ display:block; }}
 
 /* Dual table layout */
-.dual-table {{ display:grid; grid-template-columns:1fr 2fr; gap:16px; }}
+.dual-table {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
 @media(max-width:900px) {{ .dual-table {{ grid-template-columns:1fr; }} }}
 
 .table-block h3 {{ font-size:1rem; margin-bottom:8px; }}
@@ -366,15 +366,15 @@ body {{ font-family:"Noto Sans TC","Segoe UI",system-ui,sans-serif; background:v
 .weight {{ font-variant-numeric:tabular-nums; text-align:right; color:var(--dim); }}
 .change {{ font-variant-numeric:tabular-nums; }}
 
-.up {{ color:var(--green); font-weight:600; }}
-.down {{ color:var(--red); font-weight:600; }}
+.up {{ color:var(--red); font-weight:600; }}
+.down {{ color:var(--green); font-weight:600; }}
 .zero {{ color:var(--dim); }}
-.new {{ color:var(--green); font-weight:700; }}
-.del {{ color:var(--red); font-weight:700; }}
+.new {{ color:var(--red); font-weight:700; }}
+.del {{ color:var(--green); font-weight:700; }}
 
-.cell-up {{ background:rgba(63,185,80,.08); }}
-.cell-down {{ background:rgba(248,81,73,.08); }}
-.cell-new {{ background:rgba(63,185,80,.15); }}
+.cell-up {{ color:var(--red); }}
+.cell-down {{ color:var(--green); }}
+.cell-new {{ color:var(--red); font-weight:600; }}
 .cell-na {{ color:var(--dim); }}
 .cell-same {{ }}
 
