@@ -533,7 +533,7 @@ h1 { font-size: 1.6em; border-bottom: 2px solid #888; padding-bottom: .3em; }
 h2 { font-size: 1.3em; margin-top: 2em; border-left: 4px solid #4472C4; padding-left: .5em; }
 h3 { font-size: 1.0em; margin: 1em 0 .5em; }
 .pos { color: #c62828; }
-.neg { color: #1565c0; }
+.neg { color: #2e7d32; }
 .muted { color: #888; font-style: italic; }
 .meta { color: #555; font-size: .9em; }
 
@@ -586,7 +586,7 @@ table.card-table td .nm {
   display: inline;   /* 跟 .code 同一行 */
 }
 table.card-table td.pos { color: #c62828; }
-table.card-table td.neg { color: #1565c0; }
+table.card-table td.neg { color: #2e7d32; }
 table.card-table td.muted { color: #aaa; font-weight: normal; }
 table.card-table tbody tr:nth-child(even) td:not(.rank):not(.new-add):not(.new-remove) { background: #fafafa; }
 
@@ -639,7 +639,7 @@ details.etf-section[open] { background: #fafafa; padding-bottom: 1em; }
   .block th { background: #333; color: #eee; }
   .block td { border-bottom-color: #333; }
   .pos { color: #ef5350; }
-  .neg { color: #64b5f6; }
+  .neg { color: #66bb6a; }
   table.summary th, table.summary td { border-color: #555; }
   table.dense th, table.dense td { border-color: #555; }
   table.dense thead th { background: #1f3a6e; }
