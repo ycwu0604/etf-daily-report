@@ -25,8 +25,8 @@ from analyze import (
     ALL_ETFS, ETFS_WITH_WEIGHT, ETF_DISPLAY, WINDOWS, TOP_N,
     fetch_etf_history, analyze_view,
 )
-from ta_indicators import calc_indicators
-from ta_classify import classify
+from ta_indicators import calc_indicators, calc_support_resistance
+from ta_classify import classify, generate_signal
 
 
 # ── Candidate Selection ─────────────────────────────────────
@@ -67,7 +67,7 @@ def load_prices(con: sqlite3.Connection, stock_code: str) -> pd.DataFrame | None
 
 # ── Analyze One Stock ───────────────────────────────────────
 def analyze_stock(con: sqlite3.Connection, stock_code: str) -> dict | None:
-    """Fetch prices, calculate indicators, classify. Returns result or None."""
+    """Fetch prices, calculate indicators, classify, S/R, signal. Returns result or None."""
     df = load_prices(con, stock_code)
     if df is None:
         return None
@@ -78,8 +78,20 @@ def analyze_stock(con: sqlite3.Connection, stock_code: str) -> dict | None:
 
     latest = ind.iloc[-1].to_dict()
     prev3 = ind.iloc[-4].to_dict() if len(ind) >= 4 else latest
+    result = classify(latest, prev3)
 
-    return classify(latest, prev3)
+    # S/R calculation
+    sr = calc_support_resistance(ind)
+    result['sr'] = sr
+
+    # P/E from fundamentals table
+    fund_row = con.execute(
+        'SELECT pe_ratio FROM stock_fundamentals WHERE stock_code = ? ORDER BY date DESC LIMIT 1',
+        (stock_code,)
+    ).fetchone()
+    result['pe'] = fund_row[0] if fund_row else None
+
+    return result
 
 
 # ── HTML Rendering ──────────────────────────────────────────
@@ -95,6 +107,10 @@ STAGE_TEXT = {
 }
 DIR_LABEL = {'bullish': '多頭', 'bearish': '空頭', 'neutral': '整理'}
 DIR_COLOR = {'bullish': '#c62828', 'bearish': '#2e7d32', 'neutral': '#757575'}
+SIGNAL_COLORS = {
+    'BUY': '#c62828', 'SELL': '#2e7d32', 'REDUCE': '#e65100',
+    'AVOID': '#757575', 'HOLD': '#546e7a',
+}
 
 
 def fmt_val(v, fmt='{:+.2f}'):
@@ -103,27 +119,43 @@ def fmt_val(v, fmt='{:+.2f}'):
     return fmt.format(v)
 
 
-def render_stock_row(code: str, name: str, result: dict) -> str:
-    """Render one stock as a table row."""
+def render_stock_row(code: str, name: str, result: dict, slope_dir: str) -> str:
+    """Render one stock as a table row with S/R and signal."""
     if result is None:
         return (f'<tr><td class="code">{code}</td><td>{name}</td>'
-                f'<td colspan="5" class="muted">(資料不足)</td></tr>')
+                f'<td colspan="9" class="muted">(資料不足)</td></tr>')
+
     stage = result['stage']
     direction = result['direction']
     score = result['score']
     sig = result['signals']
+    sr = result.get('sr', {})
+    pe = result.get('pe')
     bg = STAGE_COLORS.get(stage, '#fff')
     tc = STAGE_TEXT.get(stage, '#333')
     dc = DIR_COLOR.get(direction, '#555')
+
+    # Generate signal
+    macd_slope = sig.get('slope_3d', 0)
+    sig_result = generate_signal(slope_dir, sr.get('position', 0.5), macd_slope, pe)
+    signal = sig_result['signal']
+    signal_note = sig_result.get('note', '')
+    sc = SIGNAL_COLORS.get(signal, '#555')
+
+    pe_str = f'{pe:.1f}' if pe and pe == pe else '—'
+    pos_pct = f"{sr.get('position', 0) * 100:.0f}%"
 
     return f'''<tr>
   <td class="code">{code}</td>
   <td>{name}</td>
   <td>{fmt_val(sig['close'], '{:.2f}')}</td>
+  <td>{pe_str}</td>
+  <td>{fmt_val(sr.get('support'), '{:.2f}')}</td>
+  <td>{fmt_val(sr.get('resistance'), '{:.2f}')}</td>
+  <td>{pos_pct}</td>
   <td><span class="stage" style="background:{bg};color:{tc}">{stage}</span></td>
   <td style="color:{dc}">{DIR_LABEL[direction]}</td>
-  <td>{score:+.2f}</td>
-  <td class="ind">RSI {sig['rsi14']:.0f} · MACD {fmt_val(sig['macd_hist'])} · MA20 {fmt_val(sig['ma20'], '{:.2f}')}</td>
+  <td><span style="color:{sc};font-weight:700">{signal}</span><span class="sig-note">{signal_note}</span></td>
 </tr>'''
 
 
@@ -137,13 +169,13 @@ def render_etf_tab(etf_code: str, pos_results: list, neg_results: list) -> str:
     html.append('<h3 class="pos-title">▲ 斜率正候選</h3>')
     html.append('<div class="table-wrap">')
     html.append('<table class="ta-table">')
-    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>')
+    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>P/E</th><th>支撐</th><th>壓力</th><th>位置</th><th>階段</th><th>方向</th><th>訊號</th></tr></thead>')
     html.append('<tbody>')
     if pos_results:
         for code, name, result in pos_results:
-            html.append(render_stock_row(code, name, result))
+            html.append(render_stock_row(code, name, result, 'pos'))
     else:
-        html.append('<tr><td colspan="7" class="muted">(無候選)</td></tr>')
+        html.append('<tr><td colspan="10" class="muted">(無候選)</td></tr>')
     html.append('</tbody></table>')
     html.append('</div>')
     html.append('</div>')
@@ -153,13 +185,13 @@ def render_etf_tab(etf_code: str, pos_results: list, neg_results: list) -> str:
     html.append('<h3 class="neg-title">▼ 斜率負候選</h3>')
     html.append('<div class="table-wrap">')
     html.append('<table class="ta-table">')
-    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>階段</th><th>方向</th><th>Score</th><th>關鍵指標</th></tr></thead>')
+    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>P/E</th><th>支撐</th><th>壓力</th><th>位置</th><th>階段</th><th>方向</th><th>訊號</th></tr></thead>')
     html.append('<tbody>')
     if neg_results:
         for code, name, result in neg_results:
-            html.append(render_stock_row(code, name, result))
+            html.append(render_stock_row(code, name, result, 'neg'))
     else:
-        html.append('<tr><td colspan="7" class="muted">(無候選)</td></tr>')
+        html.append('<tr><td colspan="10" class="muted">(無候選)</td></tr>')
     html.append('</tbody></table>')
     html.append('</div>')
     html.append('</div>')
@@ -206,6 +238,7 @@ h1 { font-size: 1.6em; border-bottom: 2px solid #888; padding-bottom: .3em; }
   display: inline-block; padding: .15em .5em; border-radius: 4px;
   font-size: .85em; font-weight: 600; white-space: nowrap;
 }
+.sig-note { font-size: .75em; color: #888; margin-left: .3em; }
 
 /* Dark mode */
 @media (prefers-color-scheme: dark) {
