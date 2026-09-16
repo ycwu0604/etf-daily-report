@@ -175,3 +175,61 @@ def classify(latest: dict, prev3: dict) -> dict:
             'vol_ma5': vol_ma5,
         }
     }
+
+
+# ── Signal Generation (Plan 1) ────────────────────────────
+def generate_signal(slope_dir: str, position: float, macd_slope: float, pe: float = None) -> dict:
+    """
+    Generate trading signal based on:
+      - slope_dir: 'pos' (ETF accumulating) or 'neg' (ETF reducing)
+      - position: 0-1 (0=at support, 1=at resistance)
+      - macd_slope: 3-day MACD histogram slope
+      - pe: P/E ratio (optional, for fundamental adjustment)
+
+    Thresholds: position < 0.20 = low zone, > 0.80 = high zone
+
+    Returns:
+        dict: {'signal': str, 'note': str}
+    """
+    signal = 'HOLD'
+    note = ''
+
+    if slope_dir == 'pos':
+        if position < 0.20:
+            # Low zone + accumulating = BUY candidate
+            if macd_slope > 0:
+                signal = 'BUY'
+                note = '動能轉強'
+            else:
+                signal = 'HOLD'
+                note = '等MACD確認'
+        elif position > 0.80:
+            signal = 'REDUCE'
+            note = '接近壓力'
+        else:
+            signal = 'HOLD'
+
+    elif slope_dir == 'neg':
+        if position > 0.80:
+            # High zone + reducing = SELL candidate
+            if macd_slope < 0:
+                signal = 'SELL'
+                note = '動能轉弱'
+            else:
+                signal = 'HOLD'
+                note = '等MACD確認'
+        elif position < 0.20:
+            signal = 'AVOID'
+            note = '不接刀'
+        else:
+            signal = 'HOLD'
+
+    else:  # neutral / unknown
+        signal = 'HOLD'
+
+    # Fundamental adjustment: P/E too high → downgrade BUY
+    if pe is not None and pe > 50 and signal == 'BUY':
+        signal = 'HOLD'
+        note = 'P/E偏高'
+
+    return {'signal': signal, 'note': note}
