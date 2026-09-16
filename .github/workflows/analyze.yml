@@ -58,6 +58,15 @@ jobs:
         run: python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
         timeout-minutes: 5
 
+      # 股債輪動 → docs/rotation.html
+      - name: Generate rotation report
+        run: python rotation_report.py --db Ezmoney/etf_data.db --out docs/rotation.html
+        timeout-minutes: 5
+
+      # 上傳更新後的 DB 回 R2（含 rotation_history）
+      - name: Upload DB to R2
+        run: python scripts/r2_sync.py upload Ezmoney/etf_data.db etf_data.db
+
       # 把 docs/ 上傳成 GH Pages artifact(必須在 build job 跑,因 deploy job 重新 checkout 拿不到 docs/)
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
