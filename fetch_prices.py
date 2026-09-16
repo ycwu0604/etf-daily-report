@@ -52,10 +52,21 @@ def init_prices_table(con: sqlite3.Connection):
             PRIMARY KEY (stock_code, date)
         )
     ''')
+    con.execute('''
+        CREATE TABLE IF NOT EXISTS stock_fundamentals (
+            stock_code   TEXT NOT NULL,
+            date         TEXT NOT NULL,
+            pe_ratio     REAL,
+            high_52w     REAL,
+            low_52w      REAL,
+            market_cap   INTEGER,
+            PRIMARY KEY (stock_code, date)
+        )
+    ''')
     con.commit()
 
 
-def fetch_stock(session: requests.Session, stock_code: str, verify: bool = True, range_: str = '4mo') -> list[tuple]:
+def fetch_stock(session: requests.Session, stock_code: str, verify: bool = True, range_: str = '1y') -> list[tuple]:
     """
     Fetch OHLCV from Yahoo chart API.
     Tries .TW first, falls back to .TWO for 4-digit codes (OTC stocks).
@@ -123,6 +134,44 @@ def _fetch_ticker(session: requests.Session, stock_code: str, ticker: str, verif
         return []
 
 
+def fetch_fundamentals(session: requests.Session, stock_code: str, ticker: str, verify: bool = True) -> dict:
+    """Fetch P/E, 52-week high/low, market cap from Yahoo quoteSummary."""
+    url = f'https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}'
+    params = {'modules': 'price,summaryDetail,defaultKeyStatistics'}
+    try:
+        r = session.get(url, params=params, headers=HEADERS, timeout=10, verify=verify)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        if 'quoteSummary' not in data or not data['quoteSummary'].get('result'):
+            return {}
+        result = data['quoteSummary']['result'][0]
+        price = result.get('price', {})
+        detail = result.get('summaryDetail', {})
+        stats = result.get('defaultKeyStatistics', {})
+
+        pe = pe_t = detail.get('trailingPE', {})
+        pe_val = pe_t.get('raw') if isinstance(pe_t, dict) else pe_t
+
+        mc = price.get('marketCap', {})
+        mc_val = mc.get('raw') if isinstance(mc, dict) else mc
+
+        # 52-week from price module
+        h52 = price.get('fiftyTwoWeekHigh', {})
+        l52 = price.get('fiftyTwoWeekLow', {})
+        h52_val = h52.get('raw') if isinstance(h52, dict) else h52
+        l52_val = l52.get('raw') if isinstance(l52, dict) else l52
+
+        return {
+            'pe_ratio': pe_val,
+            'high_52w': h52_val,
+            'low_52w': l52_val,
+            'market_cap': mc_val,
+        }
+    except Exception:
+        return {}
+
+
 def main():
     p = argparse.ArgumentParser(description='Fetch stock prices from Yahoo Finance')
     p.add_argument('--db', required=True, help='Path to etf_data.db')
@@ -147,8 +196,9 @@ def main():
         codes = [r[0] for r in con.execute(
             'SELECT DISTINCT stock_code FROM daily_holdings').fetchall()]
 
-    print(f'Fetching {len(codes)} stocks from Yahoo Finance (4mo)...')
+    print(f'Fetching {len(codes)} stocks from Yahoo Finance (1y + fundamentals)...')
     ok, fail = 0, 0
+    today = datetime.now().strftime('%Y-%m-%d')
     for i, code in enumerate(codes, 1):
         rows = fetch_stock(session, code, verify=verify_ssl)
         if rows:
@@ -160,6 +210,17 @@ def main():
             ok += 1
         else:
             fail += 1
+
+        # Fetch fundamentals (P/E, 52-week)
+        ticker = f"{code}.TW" if len(code) == 4 else f"{code}.TWO"
+        fund = fetch_fundamentals(session, code, ticker, verify=verify_ssl)
+        if fund and any(fund.get(k) is not None for k in ('pe_ratio', 'high_52w')):
+            con.execute(
+                'INSERT OR REPLACE INTO stock_fundamentals (stock_code, date, pe_ratio, high_52w, low_52w, market_cap) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                (code, today, fund.get('pe_ratio'), fund.get('high_52w'),
+                 fund.get('low_52w'), fund.get('market_cap')),
+            )
 
         if i % 10 == 0:
             con.commit()
