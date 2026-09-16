@@ -67,3 +67,68 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out['vol_ma5'] = vol.rolling(5).mean()
 
     return out
+
+
+# ── Support / Resistance ──────────────────────────────────
+def calc_support_resistance(df: pd.DataFrame, lookback: int = 20) -> dict:
+    """
+    Calculate support and resistance levels using:
+      - Bollinger Bands (already in df)
+      - Swing High/Low (lookback days)
+      - Pivot Points (from latest bar)
+
+    Returns:
+        dict: {
+            'support': float,
+            'resistance': float,
+            'position': float (0-1, where 0=at support, 1=at resistance),
+            'pivot': float,
+            'r1': float,
+            's1': float,
+            'swing_high': float,
+            'swing_low': float,
+        }
+    """
+    latest = df.iloc[-1]
+    prev_close = df.iloc[-2]['close'] if len(df) >= 2 else latest['close']
+
+    # Pivot Points (from latest day)
+    h, l, c = latest['high'], latest['low'], latest['close']
+    pivot = (h + l + c) / 3
+    r1 = 2 * pivot - l
+    s1 = 2 * pivot - h
+
+    # Swing High/Low (lookback days)
+    recent = df.tail(lookback)
+    swing_high = recent['high'].max()
+    swing_low = recent['low'].min()
+
+    # Combine: resistance = max of candidates, support = min of candidates
+    bb_upper = latest.get('bb_upper')
+    bb_lower = latest.get('bb_lower')
+
+    res_candidates = [x for x in [r1, swing_high, bb_upper] if x is not None and x == x]  # filter NaN
+    sup_candidates = [x for x in [s1, swing_low, bb_lower] if x is not None and x == x]
+
+    resistance = max(res_candidates) if res_candidates else pivot * 1.05
+    support = min(sup_candidates) if sup_candidates else pivot * 0.95
+
+    # Position: 0 = at support, 1 = at resistance
+    price = latest['close']
+    range_size = resistance - support
+    if range_size > 0:
+        position = (price - support) / range_size
+        position = max(0.0, min(1.0, position))  # clamp to [0, 1]
+    else:
+        position = 0.5
+
+    return {
+        'support': round(support, 2),
+        'resistance': round(resistance, 2),
+        'position': round(position, 4),
+        'pivot': round(pivot, 2),
+        'r1': round(r1, 2),
+        's1': round(s1, 2),
+        'swing_high': round(swing_high, 2),
+        'swing_low': round(swing_low, 2),
+    }
