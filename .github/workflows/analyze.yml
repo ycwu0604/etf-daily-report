@@ -65,7 +65,7 @@ jobs:
 
       # One-off backtest (remove after first run)
       - name: Run rotation backtest
-        run: python backtest_rotation.py --out docs/backtest.html
+        run: python backtest_rotation.py  --start 2026-01-01 --end 2026-09-16 --out docs/backtest.html
         timeout-minutes: 5
 
       # 上傳更新後的 DB 回 R2（含 rotation_history）
