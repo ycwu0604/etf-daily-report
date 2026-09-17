@@ -454,9 +454,30 @@ def render_html(results: dict) -> str:
 
 
 # ── Main ───────────────────────────────────────────────────────────────
+def filter_by_date(dates, closes, start=None, end=None):
+    """Filter data by date range (inclusive). Returns (dates, closes)."""
+    if start is None and end is None:
+        return dates, closes
+    idx_start = 0
+    idx_end = len(dates)
+    if start:
+        for i, d in enumerate(dates):
+            if d >= start:
+                idx_start = i
+                break
+    if end:
+        for i in range(len(dates) - 1, -1, -1):
+            if dates[i] <= end:
+                idx_end = i + 1
+                break
+    return dates[idx_start:idx_end], closes[idx_start:idx_end]
+
+
 def main():
     p = argparse.ArgumentParser(description='Backtest rotation strategies')
     p.add_argument('--out', default='docs/backtest.html', help='Output HTML path')
+    p.add_argument('--start', default=None, help='Start date (YYYY-MM-DD)')
+    p.add_argument('--end', default=None, help='End date (YYYY-MM-DD)')
     args = p.parse_args()
 
     print(f'[Backtest] Fetching {EQUITY_TICKER}...')
@@ -474,22 +495,16 @@ def main():
         sys.exit(1)
     bd_dates, bd_closes = bd_data
 
-    # Align dates (use equity dates as reference, find common)
-    # In practice both should have same trading days
-    eq_date_set = set(eq_dates)
-    # Find common dates
-    common_indices_bd = []
-    for i, d in enumerate(eq_dates):
-        if d in set(bd_dates):
-            common_indices_bd.append(i)
+    # Date filtering
+    if args.start or args.end:
+        eq_dates, eq_closes = filter_by_date(eq_dates, eq_closes, args.start, args.end)
+        bd_dates, bd_closes = filter_by_date(bd_dates, bd_closes, args.start, args.end)
+        print(f'[Backtest] Date range: {eq_dates[0]} ~ {eq_dates[-1]} ({len(eq_dates)} days)')
 
-    if len(common_indices_bd) < MIN_DATA:
-        print(f'[FATAL] Only {len(common_indices_bd)} common trading days', file=sys.stderr)
-        sys.exit(1)
-
-    # Use equity dates as base, interpolate bond if needed (should be same for TW market)
-    # Simple approach: just use min length
+    # Align: use min common length
     n = min(len(eq_dates), len(bd_dates))
+    eq_dates, eq_closes = eq_dates[:n], eq_closes[:n]
+    bd_dates, bd_closes = bd_dates[:n], bd_closes[:n]
     print(f'[Backtest] Running backtest on {n} days...')
 
     results = run_backtest(eq_closes, bd_closes, eq_dates)
