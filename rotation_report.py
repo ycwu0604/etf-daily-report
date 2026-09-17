@@ -238,7 +238,7 @@ def render_bar(current_level: int, target_level: int) -> str:
     # Bar fill (equity portion)
     bar = '<div class="bar-track">'
     bar += f'<div class="bar-fill equity" style="width:{cur_pct}%">{cur_pct}% 股</div>'
-    bar += f'<div class="bar-fill bond" style="left:{cur_pct}%;width:{100 - cur_pct}">{100 - cur_pct}% 債</div>'
+    bar += f'<div class="bar-fill bond" style="left:{cur_pct}%;width:{100 - cur_pct}%">{100 - cur_pct}% 債</div>'
 
     # Current marker
     if cur_pct > 0 and cur_pct < 100:
