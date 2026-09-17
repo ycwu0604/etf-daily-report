@@ -61,8 +61,8 @@ def fetch_closes(ticker: str) -> list[float] | None:
 
 
 def fetch_with_fallback(code: str) -> list[float] | None:
-    """Try .TW first, then without suffix. For ETF codes with letters."""
-    for suffix in (".TW", ""):
+    """Try .TW, .TWO, then no suffix. Handles TWSE and TPEx listings."""
+     for suffix in (".TW", ".TWO", ""):
         ticker = f"{code}{suffix}"
         print(f"  Trying {ticker}...")
         closes = fetch_closes(ticker)
