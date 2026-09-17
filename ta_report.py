@@ -123,7 +123,7 @@ def render_stock_row(code: str, name: str, result: dict, slope_dir: str) -> str:
     """Render one stock as a table row with S/R and signal."""
     if result is None:
         return (f'<tr><td class="code">{code}</td><td>{name}</td>'
-                f'<td colspan="9" class="muted">(資料不足)</td></tr>')
+                f'<td colspan="8" class="muted">(資料不足)</td></tr>')
 
     stage = result['stage']
     direction = result['direction']
@@ -142,14 +142,12 @@ def render_stock_row(code: str, name: str, result: dict, slope_dir: str) -> str:
     signal_note = sig_result.get('note', '')
     sc = SIGNAL_COLORS.get(signal, '#555')
 
-    pe_str = f'{pe:.1f}' if pe and pe == pe else '—'
     pos_pct = f"{sr.get('position', 0) * 100:.0f}%"
 
     return f'''<tr>
   <td class="code">{code}</td>
   <td>{name}</td>
   <td>{fmt_val(sig['close'], '{:.2f}')}</td>
-  <td>{pe_str}</td>
   <td>{fmt_val(sr.get('support'), '{:.2f}')}</td>
   <td>{fmt_val(sr.get('resistance'), '{:.2f}')}</td>
   <td>{pos_pct}</td>
@@ -169,13 +167,13 @@ def render_etf_tab(etf_code: str, pos_results: list, neg_results: list) -> str:
     html.append('<h3 class="pos-title">▲ 斜率正候選</h3>')
     html.append('<div class="table-wrap">')
     html.append('<table class="ta-table">')
-    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>P/E</th><th>支撐</th><th>壓力</th><th>位置</th><th>階段</th><th>方向</th><th>訊號</th></tr></thead>')
+    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>支撐</th><th>壓力</th><th>位置</th><th>階段</th><th>方向</th><th>訊號</th></tr></thead>')
     html.append('<tbody>')
     if pos_results:
         for code, name, result in pos_results:
             html.append(render_stock_row(code, name, result, 'pos'))
     else:
-        html.append('<tr><td colspan="10" class="muted">(無候選)</td></tr>')
+        html.append('<tr><td colspan="9" class="muted">(無候選)</td></tr>')
     html.append('</tbody></table>')
     html.append('</div>')
     html.append('</div>')
@@ -185,13 +183,13 @@ def render_etf_tab(etf_code: str, pos_results: list, neg_results: list) -> str:
     html.append('<h3 class="neg-title">▼ 斜率負候選</h3>')
     html.append('<div class="table-wrap">')
     html.append('<table class="ta-table">')
-    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>P/E</th><th>支撐</th><th>壓力</th><th>位置</th><th>階段</th><th>方向</th><th>訊號</th></tr></thead>')
+    html.append('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>支撐</th><th>壓力</th><th>位置</th><th>階段</th><th>方向</th><th>訊號</th></tr></thead>')
     html.append('<tbody>')
     if neg_results:
         for code, name, result in neg_results:
             html.append(render_stock_row(code, name, result, 'neg'))
     else:
-        html.append('<tr><td colspan="10" class="muted">(無候選)</td></tr>')
+        html.append('<tr><td colspan="9" class="muted">(無候選)</td></tr>')
     html.append('</tbody></table>')
     html.append('</div>')
     html.append('</div>')
