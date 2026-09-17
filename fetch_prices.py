@@ -134,10 +134,28 @@ def _fetch_ticker(session: requests.Session, stock_code: str, ticker: str, verif
         return []
 
 
-def fetch_fundamentals(session: requests.Session, stock_code: str, ticker: str, verify: bool = True) -> dict:
+def get_yahoo_crumb(session: requests.Session, verify: bool = True) -> str | None:
+    """Get Yahoo Finance crumb token (required for quoteSummary API)."""
+    try:
+        # Step 1: Get cookie
+        session.get('https://fc.yahoo.com', timeout=10, verify=verify, allow_redirects=False)
+        # Step 2: Get crumb
+        r = session.get('https://query1.finance.yahoo.com/v1/test/getcrumb', timeout=10, verify=verify)
+        if r.status_code == 200:
+            crumb = r.text.strip()
+            print(f'  [Crumb] OK: {crumb[:10]}...')
+            return crumb
+    except Exception as e:
+        print(f'  [Crumb] Failed: {e}')
+    return None
+
+
+def fetch_fundamentals(session: requests.Session, stock_code: str, ticker: str, crumb: str | None = None, verify: bool = True) -> dict:
     """Fetch P/E, 52-week high/low, market cap from Yahoo quoteSummary."""
     url = f'https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}'
     params = {'modules': 'price,summaryDetail,defaultKeyStatistics'}
+    if crumb:
+        params['crumb'] = crumb
     try:
         r = session.get(url, params=params, headers=HEADERS, timeout=10, verify=verify)
         if r.status_code != 200:
@@ -190,6 +208,9 @@ def main():
     session = requests.Session()
     verify_ssl = not args.insecure
 
+    # Get crumb for quoteSummary API
+    crumb = get_yahoo_crumb(session, verify=verify_ssl)
+
     if args.codes:
         codes = args.codes
     else:
@@ -211,15 +232,25 @@ def main():
         else:
             fail += 1
 
-        # Fetch fundamentals (P/E, 52-week)
+        # Fetch fundamentals (P/E, market cap) + calc 52w high/low from price data
         ticker = f"{code}.TW" if len(code) == 4 else f"{code}.TWO"
-        fund = fetch_fundamentals(session, code, ticker, verify=verify_ssl)
-        if fund and any(fund.get(k) is not None for k in ('pe_ratio', 'high_52w')):
+        fund = fetch_fundamentals(session, code, ticker, crumb=crumb, verify=verify_ssl)
+
+        # Calculate 52-week high/low from fetched prices
+        h52 = max(r[2] for r in rows) if rows else None  # max of highs
+        l52 = min(r[3] for r in rows) if rows else None  # min of lows
+
+        if fund and any(fund.get(k) is not None for k in ('pe_ratio', 'market_cap')):
             con.execute(
                 'INSERT OR REPLACE INTO stock_fundamentals (stock_code, date, pe_ratio, high_52w, low_52w, market_cap) '
                 'VALUES (?, ?, ?, ?, ?, ?)',
-                (code, today, fund.get('pe_ratio'), fund.get('high_52w'),
-                 fund.get('low_52w'), fund.get('market_cap')),
+                (code, today, fund.get('pe_ratio'), h52, l52, fund.get('market_cap')),
+            )
+        elif h52 and l52:
+            con.execute(
+                'INSERT OR REPLACE INTO stock_fundamentals (stock_code, date, pe_ratio, high_52w, low_52w, market_cap) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                (code, today, None, h52, l52, None),
             )
 
         if i % 10 == 0:
