@@ -1,9 +1,13 @@
 """
-ETF 股債輪動報告
-=================
-Fetches 1y daily prices for equity (00981A) and bond (00988B) ETFs,
-calculates 20-day slope, compares with hysteresis, and determines
-the target allocation level (0-10, 10% per step).
+ETF 股債輪動報告 (v2 - Dual Speed Strategy)
+=============================================
+Strategy: MA regime filter + short-term momentum timing
+  - Regime: MA10 vs MA50 (bull/bear)
+  - Timing: 3-day momentum with 0.5% threshold
+  - Bull regime: equity 50-100%
+  - Bear regime: equity 0-50%
+
+Fetches 1y daily prices for equity (00981A) and bond (00988B) ETFs.
 
 Outputs:
   - docs/rotation.html : visual allocation bar + data + history
@@ -25,11 +29,16 @@ import requests
 
 # ── Config ─────────────────────────────────────────────────────────────
 EQUITY_CODE = "00981A"
-EQUITY_NAME = "元大全球高檔股票"
+EQUITY_NAME = "主動統一台股增長"
 BOND_CODE = "00988B"
-BOND_NAME = "國泰彭博亞債"
-SLOPE_WINDOW = 20
-HYSTERESIS = 0.2  # percentage points — minimum slope diff to trigger move
+BOND_NAME = "玉山嚴選非投債"
+
+MA_SHORT = 10       # regime: short MA
+MA_LONG = 50        # regime: long MA
+MOM_WINDOW = 3      # timing: momentum lookback (days)
+MOM_THRESHOLD = 0.5 # timing: momentum threshold (%)
+
+MIN_DATA = MA_LONG + 5  # minimum data points needed
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -52,9 +61,8 @@ def fetch_closes(ticker: str) -> list[float] | None:
             return None
         result = data["chart"]["result"][0]
         closes = result["indicators"]["quote"][0]["close"]
-        # Filter None
         closes = [c for c in closes if c is not None]
-        return closes if len(closes) >= SLOPE_WINDOW + 1 else None
+        return closes if len(closes) >= MIN_DATA else None
     except Exception as e:
         print(f"  [ERR] {ticker}: {e}")
         return None
@@ -72,8 +80,15 @@ def fetch_with_fallback(code: str) -> list[float] | None:
     return None
 
 
-# ── Slope & Signal Logic ────────────────────────────────────────────
-def calc_slope(closes: list[float], window: int = SLOPE_WINDOW) -> float:
+# ── Indicators ─────────────────────────────────────────────────────────
+def calc_ma(closes: list[float], window: int) -> float:
+    """Simple moving average of last `window` closes."""
+    if len(closes) < window:
+        return 0.0
+    return sum(closes[-window:]) / window
+
+
+def calc_momentum(closes: list[float], window: int = MOM_WINDOW) -> float:
     """Percentage change over `window` days."""
     if len(closes) < window + 1:
         return 0.0
@@ -84,39 +99,82 @@ def calc_slope(closes: list[float], window: int = SLOPE_WINDOW) -> float:
     return (current / past - 1) * 100
 
 
-def determine_target(current_level: int, equity_slope: float, bond_slope: float) -> tuple[int, str]:
+# ── Strategy Logic ─────────────────────────────────────────────────────
+def determine_allocation(closes: list[float]) -> dict:
     """
-    Compare slopes with hysteresis. Returns (target_level, reason).
-    Level 0 = 0% equity / 100% bond
-    Level 10 = 100% equity / 0% bond
+    Dual-speed strategy:
+      Regime: MA10 vs MA50
+      Timing: 3-day momentum
+      Bull: equity 50-100%, Bear: equity 0-50%
     """
-    diff = equity_slope - bond_slope
+    ma_s = calc_ma(closes, MA_SHORT)
+    ma_l = calc_ma(closes, MA_LONG)
+    mom = calc_momentum(closes, MOM_WINDOW)
+    price = closes[-1]
 
-    if diff > HYSTERESIS:
-        target = min(current_level + 1, 10)
-        if target != current_level:
-            return target, f"股斜率領先 {diff:+.2f}% > +{HYSTERESIS}% → 加股 10%"
-        return current_level, "股較強但已滿倉 (100% 股)"
-    elif diff < -HYSTERESIS:
-        target = max(current_level - 1, 0)
-        if target != current_level:
-            return target, f"債斜率領先 {abs(diff):+.2f}% > +{HYSTERESIS}% → 加債 10%"
-        return current_level, "債較強但已滿倉 (100% 債)"
+    regime = "bull" if ma_s > ma_l else "bear"
+
+    if regime == "bull":
+        # Equity bias: 50-100%
+        if mom > MOM_THRESHOLD:
+            equity_pct = 100
+        elif mom > 0:
+            equity_pct = 80
+        elif mom > -MOM_THRESHOLD:
+            equity_pct = 60
+        else:
+            equity_pct = 50
     else:
-        return current_level, f"斜率差 {diff:+.2f}% 在死區 ±{HYSTERESIS}% 內，維持現狀"
+        # Bond bias: 0-50%
+        if mom < -MOM_THRESHOLD:
+            equity_pct = 0
+        elif mom < 0:
+            equity_pct = 20
+        elif mom < MOM_THRESHOLD:
+            equity_pct = 40
+        else:
+            equity_pct = 50
+
+    bond_pct = 100 - equity_pct
+
+    # Build reason
+    regime_cn = "多頭" if regime == "bull" else "空頭"
+    mom_dir = "↑" if mom > 0 else "↓" if mom < 0 else "→"
+    reason = f"MA{MA_SHORT} {'>' if regime == 'bull' else '<'} MA{MA_LONG} ({regime_cn}) + {MOM_WINDOW}d動能 {mom:+.2f}% {mom_dir}"
+
+    return {
+        "price": price,
+        "ma_short": ma_s,
+        "ma_long": ma_l,
+        "momentum": mom,
+        "regime": regime,
+        "equity_pct": equity_pct,
+        "bond_pct": bond_pct,
+        "reason": reason,
+    }
 
 
 # ── DB Operations ──────────────────────────────────────────────────────
 def init_rotation_table(con: sqlite3.Connection):
+    # Auto-migration: drop old schema if it exists (v1 had 'level' and 'slope' columns)
+    try:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(rotation_history)").fetchall()]
+        if cols and 'level' in cols:
+            con.execute("DROP TABLE rotation_history")
+            print("  [MIGRATION] Dropped old rotation_history (v1 schema)")
+    except Exception:
+        pass
     con.execute("""
         CREATE TABLE IF NOT EXISTS rotation_history (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             date        TEXT NOT NULL UNIQUE,
-            level       INTEGER NOT NULL,
             equity_pct  INTEGER NOT NULL,
             bond_pct    INTEGER NOT NULL,
-            equity_slope REAL,
-            bond_slope  REAL,
+            price       REAL,
+            ma_short    REAL,
+            ma_long     REAL,
+            momentum    REAL,
+            regime      TEXT,
             action      TEXT,
             reason      TEXT,
             created_at  TEXT DEFAULT (datetime('now'))
@@ -125,32 +183,42 @@ def init_rotation_table(con: sqlite3.Connection):
     con.commit()
 
 
-def get_current_level(con: sqlite3.Connection) -> int:
-    """Get most recent level. Default 5 (50/50) if no history."""
+def get_current_allocation(con: sqlite3.Connection) -> dict | None:
+    """Get most recent allocation. Returns None if no history."""
     row = con.execute(
-        "SELECT level FROM rotation_history ORDER BY date DESC LIMIT 1"
+        "SELECT date, equity_pct, bond_pct, price, ma_short, ma_long, momentum, regime, action, reason "
+        "FROM rotation_history ORDER BY date DESC LIMIT 1"
     ).fetchone()
-    return row[0] if row else 5
+    if not row:
+        return None
+    return {
+        "date": row[0], "equity_pct": row[1], "bond_pct": row[2],
+        "price": row[3], "ma_short": row[4], "ma_long": row[5],
+        "momentum": row[6], "regime": row[7], "action": row[8], "reason": row[9],
+    }
 
 
-def record_level(con: sqlite3.Connection, date: str, level: int, eq_slope: float, bd_slope: float, action: str, reason: str):
+def record_allocation(con: sqlite3.Connection, date: str, result: dict, action: str):
     con.execute(
-        "INSERT OR REPLACE INTO rotation_history (date, level, equity_pct, bond_pct, equity_slope, bond_slope, action, reason) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (date, level, level * 10, (10 - level) * 10, eq_slope, bd_slope, action, reason),
+        """INSERT OR REPLACE INTO rotation_history
+           (date, equity_pct, bond_pct, price, ma_short, ma_long, momentum, regime, action, reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (date, result["equity_pct"], result["bond_pct"], result["price"],
+         result["ma_short"], result["ma_long"], result["momentum"],
+         result["regime"], action, result["reason"]),
     )
     con.commit()
 
 
-def get_history(con: sqlite3.Connection, limit: int = 15) -> list[dict]:
+def get_history(con: sqlite3.Connection, limit: int = 20) -> list[dict]:
     rows = con.execute(
-        """SELECT date, level, equity_pct, bond_pct, equity_slope, bond_slope, action, reason
+        """SELECT date, equity_pct, bond_pct, price, momentum, regime, action, reason
            FROM rotation_history ORDER BY date DESC LIMIT ?""",
         (limit,),
     ).fetchall()
     return [
-        {"date": r[0], "level": r[1], "equity_pct": r[2], "bond_pct": r[3],
-             "equity_slope": r[4], "bond_slope": r[5], "action": r[6], "reason": r[7]}
+        {"date": r[0], "equity_pct": r[1], "bond_pct": r[2], "price": r[3],
+         "momentum": r[4], "regime": r[5], "action": r[6], "reason": r[7]}
         for r in rows
     ]
 
@@ -169,43 +237,43 @@ h1 { font-size: 1.5em; border-bottom: 2px solid #888; padding-bottom: .3em; }
 .bar-label-eq { color: #c62828; }
 .bar-label-bd { color: #1565c0; }
 .bar-track { position: relative; height: 40px; background: #e0e0e0; border-radius: 6px; overflow: visible; }
-.bar-fill { position: absolute; top: 0; height: 100%; border-radius: 6px 0 0 6px;
+.bar-fill { position: absolute; top: 0; height: 100%;
             display: flex; align-items: center; justify-content: center;
-            font-weight: 700; font-size: .9em; color: #fff; transition: width .3s; }
-.bar-fill.equity { background: linear-gradient(90deg, #ef5350, #c62828); }
+            font-weight: 700; font-size: .9em; color: #fff; }
+.bar-fill.equity { background: linear-gradient(90deg, #ef5350, #c62828); border-radius: 6px 0 0 6px; }
 .bar-fill.bond { background: linear-gradient(90deg, #42a5f5, #1565c0); border-radius: 0 6px 6px 0; }
 .bar-ticks { position: relative; height: 20px; margin-top: 2px; }
 .bar-tick { position: absolute; top: 0; width: 1px; height: 8px; background: #999; }
 .bar-tick-label { position: absolute; top: 8px; font-size: .65em; color: #666; transform: translateX(-50%); }
-.bar-marker { position: absolute; top: -4px; width: 2px; height: 48px; z-index: 2; }
-.bar-marker.current { background: #ff6f00; }
-.bar-marker.target { background: #7b1fa2; }
-.bar-legend { display: flex; gap: 1.5em; margin-top: .5em; font-size: .85em; }
-.legend-item { display: flex; align-items: center; gap: .3em; }
-.legend-dot { width: 12px; height: 12px; border-radius: 2px; }
+
+/* Regime Badge */
+.regime-badge { display: inline-block; padding: .2em .8em; border-radius: 12px;
+                font-weight: 700; font-size: .9em; margin: .5em 0; }
+.regime-bull { background: #ffcdd2; color: #b71c1c; }
+.regime-bear { background: #c8e6c9; color: #1b5e20; }
 
 /* Data Cards */
-.data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; margin: 1em 0; }
-.data-card { background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: .8em; }
-.data-card h3 { margin: 0 0 .4em; font-size: .9em; }
-.data-card .value { font-size: 1.3em; font-weight: 700; }
-.data-card .slope-pos { color: #c62828; }
-.data-card .slope-neg { color: #2e7d32; }
+.data-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .8em; margin: 1em 0; }
+.data-card { background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: .7em; }
+.data-card h3 { margin: 0 0 .3em; font-size: .8em; color: #666; }
+.data-card .value { font-size: 1.2em; font-weight: 700; }
+.pos { color: #c62828; }
+.neg { color: #2e7d32; }
 
 /* Action Box */
 .action-box { background: #fff3e0; border: 1px solid #ffcc02; border-radius: 8px;
-             padding: .8em 1em; margin: 1em 0; font-size: 1em; }
+             padding: .8em 1em; margin: 1em 0; }
 .action-box.hold { background: #f5f5f5; border-color: #ccc; }
 .action-box .action-title { font-weight: 700; font-size: 1.1em; }
-.action-box .action-detail { font-size: .9em; margin-top: .3em; }
+.action-box .action-detail { font-size: .9em; margin-top: .3em; color: #555; }
 
 /* History Table */
 .history-table { width: 100%; border-collapse: collapse; margin-top: 1em; font-size: .85em; }
 .history-table th { background: #f5f5f5; padding: .4em .5em; text-align: left; border-bottom: 2px solid #ddd; }
 .history-table td { padding: .35em .5em; border-bottom: 1px solid #eee; }
-.level-up { color: #c62828; font-weight: 600; }
-.level-down { color: #1565c0; font-weight: 600; }
-.level-hold { color: #757575; }
+.up { color: #c62828; font-weight: 600; }
+.down { color: #1565c0; font-weight: 600; }
+.hold { color: #757575; }
 
 /* Dark mode */
 @media (prefers-color-scheme: dark) {
@@ -216,10 +284,13 @@ h1 { font-size: 1.5em; border-bottom: 2px solid #888; padding-bottom: .3em; }
   .data-card { background: #2a2a2a; border-color: #444; }
   .action-box { background: #2d2a1e; border-color: #6d5b00; }
   .action-box.hold { background: #2a2a2a; border-color: #555; }
+  .action-box .action-detail { color: #aaa; }
   .history-table th { background: #2a2a2a; color: #ccc; border-color: #444; }
   .history-table td { border-color: #333; }
   .bar-tick { background: #777; }
   .bar-tick-label { color: #aaa; }
+  .regime-bull { background: #3d1a1a; color: #ef9a9a; }
+  .regime-bear { background: #1a3d1a; color: #a5d6a7; }
 }
 
 /* Mobile */
@@ -230,134 +301,113 @@ h1 { font-size: 1.5em; border-bottom: 2px solid #888; padding-bottom: .3em; }
 """
 
 
-def render_bar(current_level: int, target_level: int) -> str:
-    """Render the allocation bar HTML."""
-    cur_pct = current_level * 10
-    tgt_pct = target_level * 10
-
-    # Bar fill (equity portion)
+def render_bar(equity_pct: int) -> str:
+    """Render the allocation bar."""
+    bond_pct = 100 - equity_pct
     bar = '<div class="bar-track">'
-    bar += f'<div class="bar-fill equity" style="width:{cur_pct}%">{cur_pct}% 股</div>'
-    bar += f'<div class="bar-fill bond" style="left:{cur_pct}%;width:{100 - cur_pct}%">{100 - cur_pct}% 債</div>'
-
-    # Current marker
-    if cur_pct > 0 and cur_pct < 100:
-        bar += f'<div class="bar-marker current" style="left:{cur_pct}%"></div>'
-
-    # Target marker (only if different from current)
-    if tgt_pct != cur_pct:
-        bar += f'<div class="bar-marker target" style="left:{tgt_pct}%"></div>'
-
+    if equity_pct > 0:
+        bar += f'<div class="bar-fill equity" style="left:0%;width:{equity_pct}%">{equity_pct}% 股</div>'
+    if bond_pct > 0:
+        bar += f'<div class="bar-fill bond" style="left:{equity_pct}%;width:{bond_pct}%">{bond_pct}% 債</div>'
     bar += '</div>'
 
-    # Tick marks
     ticks = '<div class="bar-ticks">'
     for i in range(0, 11):
         ticks += f'<div class="bar-tick" style="left:{i * 10}%"></div>'
         ticks += f'<div class="bar-tick-label" style="left:{i * 10}%">{i * 10}</div>'
     ticks += '</div>'
 
-    # Legend
-    legend = '<div class="bar-legend">'
-    legend += '<div class="legend-item"><div class="legend-dot" style="background:#ff6f00"></div>目前</div>'
-    if tgt_pct != cur_pct:
-        legend += '<div class="legend-item"><div class="legend-dot" style="background:#7b1fa2"></div>目標</div>'
-    legend += '</div>'
-
-    return f'<div class="bar-container">{bar}{ticks}{legend}</div>'
+    return f'<div class="bar-container">{bar}{ticks}</div>'
 
 
-def render_data_cards(eq_price: float, eq_slope: float, bd_price: float, bd_slope: float) -> str:
-    """Render the data cards."""
-    def slope_cls(v): return 'slope-pos' if v >= 0 else 'slope-neg'
-    def arrow(v): return '↗' if v >= 0 else '↘'
+def render_data_cards(result: dict, bond_price: float) -> str:
+    """Render indicator cards."""
+    mom_cls = 'pos' if result['momentum'] >= 0 else 'neg'
+    mom_arrow = '↑' if result['momentum'] >= 0 else '↓'
+    ma_diff = result['ma_short'] - result['ma_long']
+    ma_cls = 'pos' if ma_diff >= 0 else 'neg'
 
     return f'''<div class="data-grid">
   <div class="data-card">
-    <h3>{EQUITY_CODE} {EQUITY_NAME}</h3>
-    <div class="value">${eq_price:.2f}</div>
-    <div>20日斜率: <span class="{slope_cls(eq_slope)}">{eq_slope:+.3f}% {arrow(eq_slope)}</span></div>
+    <h3>{EQUITY_CODE} 收盤</h3>
+    <div class="value">${result["price"]:.2f}</div>
+    <div style="font-size:.8em;color:#888">{EQUITY_NAME}</div>
   </div>
   <div class="data-card">
-    <h3>{BOND_CODE} {BOND_NAME}</h3>
-    <div class="value">${bd_price:.2f}</div>
-    <div>20日斜率: <span class="{slope_cls(bd_slope)}">{bd_slope:+.3f}% {arrow(bd_slope)}</span></div>
+    <h3>MA{MA_SHORT} vs MA{MA_LONG}</h3>
+    <div class="value {ma_cls}">{result["ma_short"]:.2f} / {result["ma_long"]:.2f}</div>
+    <div style="font-size:.8em" class="{ma_cls}">差 {ma_diff:+.3f}</div>
+  </div>
+  <div class="data-card">
+    <h3>{MOM_WINDOW}日動能</h3>
+    <div class="value {mom_cls}">{result["momentum"]:+.3f}% {mom_arrow}</div>
+    <div style="font-size:.8em;color:#888">{BOND_CODE}: ${bond_price:.2f}</div>
   </div>
 </div>'''
 
 
-def render_action_box(current_level: int, target_level: int, reason: str) -> str:
-    """Render the action recommendation box."""
-    cur_eq = current_level * 10
-    tgt_eq = target_level * 10
-
-    if target_level != current_level:
-        if target_level > current_level:
-            move = f"賣出 {cur_eq - tgt_eq + 10}% 債 → 買入 {tgt_eq - cur_eq + 10}% 股"
-            # Fix: target > current means adding equity
-            delta = (target_level - current_level) * 10
-            move = f"賣出 {delta}% 債 → 買入 {delta}% 股"
+def render_action(current_alloc: dict | None, new_alloc: dict) -> str:
+    """Render the action recommendation."""
+    if current_alloc is None or current_alloc["equity_pct"] != new_alloc["equity_pct"]:
+        old_pct = current_alloc["equity_pct"] if current_alloc else 50
+        new_pct = new_alloc["equity_pct"]
+        delta = new_pct - old_pct
+        if delta > 0:
+            action_text = f"買入 {delta}% 股 / 賣出 {delta}% 債"
         else:
-            delta = (current_level - target_level) * 10
-            move = f"賣出 {delta}% 股 → 買入 {delta}% 債"
+            action_text = f"賣出 {abs(delta)}% 股 / 買入 {abs(delta)}% 債"
         return f'''<div class="action-box">
-  <div class="action-title">⚡ 建議操作</div>
-  <div class="action-detail">{move}</div>
-  <div class="action-detail">理由：{reason}</div>
+  <div class="action-title">⚡ 調整配置: {old_pct}% → {new_pct}% 股</div>
+  <div class="action-detail">{action_text}</div>
+  <div class="action-detail">{new_alloc["reason"]}</div>
 </div>'''
     else:
         return f'''<div class="action-box hold">
-  <div class="action-title">✋ 維持現狀</div>
-  <div class="action-detail">{reason}</div>
+  <div class="action-title">✋ 維持 {new_alloc["equity_pct"]}% 股 / {new_alloc["bond_pct"]}% 債</div>
+  <div class="action-detail">{new_alloc["reason"]}</div>
 </div>'''
 
 
 def render_history(history: list[dict]) -> str:
-    """Render the history table."""
+    """Render history table."""
     if not history:
-        return '<p class="meta">尚無切換紀錄。</p>'
+        return '<p class="meta">尚無紀錄。</p>'
 
     rows = []
-    prev_level = None
     for i, h in enumerate(history):
-        level = h['level']
-        # Determine direction relative to previous row (older)
+        # Compare with previous (older) entry
         if i == 0:
-            cls = 'level-hold'
-            arrow = '—'
+            cls, arrow = 'hold', '—'
         else:
-            older = history[i - 1]['level']
-            if level > older:
-                cls = 'level-up'
-                arrow = '▲'
-            elif level < older:
-                cls = 'level-down'
-                arrow = '▼'
+            if h['equity_pct'] > history[i - 1]['equity_pct']:
+                cls, arrow = 'up', '▲'
+            elif h['equity_pct'] < history[i - 1]['equity_pct']:
+                cls, arrow = 'down', '▼'
             else:
-                cls = 'level-hold'
-                arrow = '—'
+                cls, arrow = 'hold', '—'
 
-        eq_slope = h['equity_slope']
-        bd_slope = h['bond_slope']
+        regime_badge = '🔴' if h['regime'] == 'bull' else '🟢'
+        mom_cls = 'pos' if (h['momentum'] or 0) >= 0 else 'neg'
+
         rows.append(f'''<tr>
   <td>{h['date']}</td>
-  <td class="{cls}">{arrow} Level {level}</td>
-  <td>{h['equity_pct']}% / {h['bond_pct']}%</td>
-  <td>{eq_slope:+.3f}% / {bd_slope:+.3f}%</td>
-  <td>{h['reason']}</td>
+  <td class="{cls}">{arrow} {h['equity_pct']}/{h['bond_pct']}</td>
+  <td>${h['price']:.2f}</td>
+  <td class="{mom_cls}">{h['momentum']:+.2f}%</td>
+  <td>{regime_badge}</td>
 </tr>''')
 
     return f'''<table class="history-table">
-  <thead><tr><th>日期</th><th>檔位</th><th>股/債</th><th>斜率 股/債</th><th>原因</th></tr></thead>
+  <thead><tr><th>日期</th><th>股/債</th><th>收盤</th><th>{MOM_WINDOW}d動能</th><th>Regime</th></tr></thead>
   <tbody>{''.join(rows)}</tbody>
 </table>'''
 
 
-def render_full_html(data: dict) -> str:
+def render_full_html(result: dict, current_alloc: dict | None, bond_price: float, history: list[dict]) -> str:
     """Assemble the full HTML page."""
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
-    current = data['current_level']
-    target = data['target_level']
+    regime_cls = 'regime-bull' if result['regime'] == 'bull' else 'regime-bear'
+    regime_cn = '多頭' if result['regime'] == 'bull' else '空頭'
 
     html = ['<!DOCTYPE html>', '<html lang="zh-Hant"><head>',
             '<meta charset="utf-8">',
@@ -366,26 +416,27 @@ def render_full_html(data: dict) -> str:
             f'<style>{CSS}</style>',
             '</head><body>',
             '<h1>ETF 股債輪動</h1>',
-            f'<p class="meta">更新時間：{now}</p>',
+            f'<p class="meta">更新：{now} | MA{MA_SHORT}/MA{MA_LONG} + {MOM_WINDOW}d動能</p>',
             '',
-            # Bar labels
-            '<div class="bar-labels>',
-            f'<span class="bar-label-eq">← {EQUITY_CODE} 股票</span>',
-            f'<span class="bar-label-bd">{BOND_CODE} 債券 →</span>',
+            # Regime badge
+            f'<span class="regime-badge {regime_cls}">{regime_cn} ({result["regime"]})</span>',
+            '',
+            # Bar
+            '<div class="bar-labels">',
+            f'<span class="bar-label-eq">← {EQUITY_CODE} 股</span>',
+            f'<span class="bar-label-bd">{BOND_CODE} 債 →</span>',
             '</div>',
+            render_bar(result['equity_pct']),
             '',
-            render_bar(current, target),
+            # Data cards
+            render_data_cards(result, bond_price),
             '',
-            render_data_cards(data['eq_price'], data['eq_slope'], data['bd_price'], data['bd_slope']),
+            # Action
+            render_action(current_alloc, result),
             '',
-            render_action_box(current, target, data['reason']),
-            '',
-            # Summary line
-            f'<p><strong>目前配置：</strong>{current * 10}% 股 / {(10 - current) * 10}% 債'
-            f' &nbsp;|&nbsp; <strong>目標配置：</strong>{target * 10}% 股 / {(10 - target) * 10}% 債</p>',
-            '',
-            '<h2>切換歷史</h2>',
-            render_history(data['history']),
+            # History
+            '<h2>配置歷史</h2>',
+            render_history(history),
             '</body></html>']
 
     return '\n'.join(html)
@@ -393,7 +444,7 @@ def render_full_html(data: dict) -> str:
 
 # ── Main ───────────────────────────────────────────────────────────────
 def main():
-    p = argparse.ArgumentParser(description='ETF Equity-Bond Rotation Report')
+    p = argparse.ArgumentParser(description='ETF Equity-Bond Rotation (Dual Speed)')
     p.add_argument('--db', required=True, help='Path to etf_data.db')
     p.add_argument('--out', required=True, help='Output HTML path')
     p.add_argument('--json', default='rotation_signal.json', help='Output JSON path')
@@ -411,74 +462,72 @@ def main():
     print(f'[Rotation] Fetching {EQUITY_CODE}...')
     eq_closes = fetch_with_fallback(EQUITY_CODE)
     time.sleep(1)
-    print(f'[Rotation] {BOND_CODE}...')
+    print(f'[Rotation] Fetching {BOND_CODE}...')
     bd_closes = fetch_with_fallback(BOND_CODE)
 
     if not eq_closes:
         print(f'[FATAL] Cannot fetch {EQUITY_CODE} prices', file=sys.stderr)
         con.close()
         sys.exit(1)
+
+    bond_price = bd_closes[-1] if bd_closes else 0.0
     if not bd_closes:
-        print(f'[FATAL] Cannot fetch {BOND_CODE} prices', file=sys.stderr)
-        con.close()
-        sys.exit(1)
+        print(f'  [WARN] Cannot fetch {BOND_CODE}, using 0 for display')
 
-    # 2. Calculate slopes
-    eq_price = eq_closes[-1]
-    bd_price = bd_closes[-1]
-    eq_slope = calc_slope(eq_closes)
-    bd_slope = calc_slope(bd_closes)
-    print(f'  {EQUITY_CODE}: ${eq_price:.2f}, slope20 = {eq_slope:+.4f}%')
-    print(f'  {BOND_CODE}: ${bd_price:.2f}, slope20 = {bd_slope:+.4f}%')
+    # 2. Calculate allocation
+    result = determine_allocation(eq_closes)
+    print(f"  Price: ${result['price']:.2f}")
+    print(f"  MA{MA_SHORT}: {result['ma_short']:.3f}, MA{MA_LONG}: {result['ma_long']:.3f}")
+    print(f"  {MOM_WINDOW}d Momentum: {result['momentum']:+.4f}%")
+    print(f"  Regime: {result['regime']}")
+    print(f"  Allocation: {result['equity_pct']}% equity / {result['bond_pct']}% bond")
+    print(f"  Reason: {result['reason']}")
 
-    # 3. Determine target
-    current_level = get_current_level(con)
-    target_level, reason = determine_target(current_level, eq_slope, bd_slope)
-    print(f'  Level: {current_level} → {target_level}')
-    print(f'  Reason: {reason}')
-
-    # 3. Record in DB (always update today's entry)
+    # 3. Record in DB
     today = datetime.now().strftime('%Y-%m-%d')
-    action = 'HOLD'
-    if target_level > current_level:
-        action = f'BUY_EQUITY_{(target_level - current_level) * 10}%'
-    elif target_level < current_level:
-        action = f'SELL_EQUITY_{(current_level - target_level) * 10}%'
-    record_level(con, today, target_level, eq_slope, bd_slope, action, reason)
+    current = get_current_allocation(con)
+    if current and current['equity_pct'] != result['equity_pct']:
+        delta = result['equity_pct'] - current['equity_pct']
+        if delta > 0:
+            action = f'BUY_EQ_{delta}%'
+        else:
+            action = f'SELL_EQ_{abs(delta)}%'
+    else:
+        action = 'HOLD'
+    record_allocation(con, today, result, action)
 
     # 4. Get history
-    history = get_history(con, limit=15)
+    history = get_history(con, limit=20)
     con.close()
 
     # 5. Render HTML
-    data = {
-        'current_level': current_level,
-        'target_level': target_level,
-        'eq_price': eq_price,
-        'bd_price': bd_price,
-        'eq_slope': eq_slope,
-        'bd_slope': bd_slope,
-        'reason': reason,
-        'history': history,
-    }
-    html = render_full_html(data)
+    html = render_full_html(result, current, bond_price, history)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding='utf-8')
     print(f'[Rotation] HTML → {args.out}')
 
-    # 6. Write JSON signal
+    # 6. Write JSON signal (for future trading system)
     signal = {
         'date': today,
-        'equity': {'code': EQUITY_CODE, 'name': EQUITY_NAME, 'price': eq_price,
-                    'slope20': round(eq_slope, 4)},
-        'bond': {'code': BOND_CODE, 'name': BOND_NAME, 'price': bd_price,
-                  'slope20': round(bd_slope, 4)},
-        'current_level': current_level,
-        'target_level': target_level,
+        'equity': {'code': EQUITY_CODE, 'name': EQUITY_NAME, 'price': result['price']},
+        'bond': {'code': BOND_CODE, 'name': BOND_NAME, 'price': bond_price},
+        'indicators': {
+            'ma_short': round(result['ma_short'], 4),
+            'ma_long': round(result['ma_long'], 4),
+            'momentum': round(result['momentum'], 4),
+        },
+        'regime': result['regime'],
+        'target': {
+            'equity_pct': result['equity_pct'],
+            'bond_pct': result['bond_pct'],
+        },
+        'current': {
+            'equity_pct': current['equity_pct'] if current else 50,
+            'bond_pct': current['bond_pct'] if current else 50,
+        } if current else None,
         'action': action,
-        'allocation': {'equity': target_level * 10, 'bond': (10 - target_level) * 10},
-        'reason': reason,
+        'reason': result['reason'],
     }
     json_path = Path(args.json)
     json_path.write_text(json.dumps(signal, ensure_ascii=False, indent=2), encoding='utf-8')
