@@ -219,6 +219,7 @@ def main():
 
     print(f'Fetching {len(codes)} stocks from Yahoo Finance (1y + fundamentals)...')
     ok, fail = 0, 0
+    pe_ok = 0
     today = datetime.now().strftime('%Y-%m-%d')
     for i, code in enumerate(codes, 1):
         rows = fetch_stock(session, code, verify=verify_ssl)
@@ -235,6 +236,10 @@ def main():
         # Fetch fundamentals (P/E, market cap) + calc 52w high/low from price data
         ticker = f"{code}.TW" if len(code) == 4 else f"{code}.TWO"
         fund = fetch_fundamentals(session, code, ticker, crumb=crumb, verify=verify_ssl)
+        if fund and fund.get('pe_ratio') is not None:
+            pe_ok += 1
+            if pe_ok <= 3:
+                print(f'  [P/E] {code} ({ticker}): {fund["pe_ratio"]:.2f}')
 
         # Calculate 52-week high/low from fetched prices
         h52 = max(r[2] for r in rows) if rows else None  # max of highs
@@ -263,7 +268,7 @@ def main():
 
     con.commit()
     con.close()
-    print(f'[DONE] ok={ok} fail={fail} total={len(codes)}')
+    print(f'[DONE] prices: ok={ok} fail={fail} | P/E: {pe_ok}/{len(codes)} | total={len(codes)}')
 
 
 if __name__ == '__main__':
