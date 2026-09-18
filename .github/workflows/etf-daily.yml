@@ -147,3 +147,18 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      # ═══════════════════════════════════════════════════════
+      # Step 9: Telegram 通知
+      # ═══════════════════════════════════════════════════════
+      - name: Notify Telegram
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            STATUS="✅"
+          else
+            STATUS="❌"
+          fi
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=${STATUS} ${{ github.workflow }} | ${{ job.status }} | ${{ github.event_name }}"
+  
