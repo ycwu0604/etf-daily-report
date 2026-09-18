@@ -1,17 +1,12 @@
 """
-ETF 股債輪動報告 (v2 - Dual Speed Strategy)
+ETF 股債輪動報告 (v3 - Fast Signal, Dual Pair)
 =============================================
-Strategy: MA regime filter + short-term momentum timing
-  - Regime: MA10 vs MA50 (bull/bear)
-  - Timing: 3-day momentum with 0.5% threshold
-  - Bull regime: equity 50-100%
-  - Bear regime: equity 0-50%
-
-Fetches 1y daily prices for equity (00981A) and bond (00988B) ETFs.
+Strategy: MA5/MA20 regime + 1-day momentum (0.3% threshold)
+Pairs: 00981A+00988B, 0050+00988B
 
 Outputs:
-  - docs/rotation.html : visual allocation bar + data + history
-  - rotation_signal.json : machine-readable signal for future trading system
+  - docs/rotation.html : visual allocation bars + data + history (both pairs)
+  - rotation_signal.json : machine-readable signals for future trading system
 
 Usage:
     python rotation_report.py --db Ezmoney/etf_data.db --out docs/rotation.html
@@ -27,21 +22,15 @@ from pathlib import Path
 
 import requests
 
-# ── Config ─────────────────────────────────────────────────────────────
-EQUITY_CODE = "00981A"
-EQUITY_NAME = "主動統一台股增長"
-BOND_CODE = "00988B"
-BOND_NAME = "玉山嚴選非投債"
-
-MA_SHORT = 10       # regime: short MA
-MA_LONG = 50        # regime: long MA
-MOM_WINDOW = 3      # timing: momentum lookback (days)
-MOM_THRESHOLD = 0.5 # timing: momentum threshold (%)
-
-MIN_DATA = MA_LONG + 5  # minimum data points needed
+from rotation_strategy import (
+    MA_SHORT, MA_LONG, MOM_WINDOW, MOM_THRESHOLD, MIN_DATA, PAIRS,
+    calc_ma, calc_momentum, determine_allocation,
+    init_rotation_table, get_latest_allocation, record_allocation, get_history,
+)
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+VERIFY_SSL = True  # Set False with --insecure (local corporate proxy)
 
 
 # ── Price Fetching ─────────────────────────────────────────────────────
@@ -50,10 +39,10 @@ def fetch_closes(ticker: str) -> list[float] | None:
     url = YAHOO_CHART_URL.format(ticker=ticker)
     params = {"range": "1y", "interval": "1d"}
     try:
-        r = requests.get(url, params=params, headers=HEADERS, timeout=15)
+        r = requests.get(url, params=params, headers=HEADERS, timeout=15, verify=VERIFY_SSL)
         if r.status_code == 429:
             time.sleep(5)
-            r = requests.get(url, params=params, headers=HEADERS, timeout=15)
+            r = requests.get(url, params=params, headers=HEADERS, timeout=15, verify=VERIFY_SSL)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -80,156 +69,18 @@ def fetch_with_fallback(code: str) -> list[float] | None:
     return None
 
 
-# ── Indicators ─────────────────────────────────────────────────────────
-def calc_ma(closes: list[float], window: int) -> float:
-    """Simple moving average of last `window` closes."""
-    if len(closes) < window:
-        return 0.0
-    return sum(closes[-window:]) / window
-
-
-def calc_momentum(closes: list[float], window: int = MOM_WINDOW) -> float:
-    """Percentage change over `window` days."""
-    if len(closes) < window + 1:
-        return 0.0
-    current = closes[-1]
-    past = closes[-1 - window]
-    if past == 0:
-        return 0.0
-    return (current / past - 1) * 100
-
-
-# ── Strategy Logic ─────────────────────────────────────────────────────
-def determine_allocation(closes: list[float]) -> dict:
-    """
-    Dual-speed strategy:
-      Regime: MA10 vs MA50
-      Timing: 3-day momentum
-      Bull: equity 50-100%, Bear: equity 0-50%
-    """
-    ma_s = calc_ma(closes, MA_SHORT)
-    ma_l = calc_ma(closes, MA_LONG)
-    mom = calc_momentum(closes, MOM_WINDOW)
-    price = closes[-1]
-
-    regime = "bull" if ma_s > ma_l else "bear"
-
-    if regime == "bull":
-        # Equity bias: 50-100%
-        if mom > MOM_THRESHOLD:
-            equity_pct = 100
-        elif mom > 0:
-            equity_pct = 80
-        elif mom > -MOM_THRESHOLD:
-            equity_pct = 60
-        else:
-            equity_pct = 50
-    else:
-        # Bond bias: 0-50%
-        if mom < -MOM_THRESHOLD:
-            equity_pct = 0
-        elif mom < 0:
-            equity_pct = 20
-        elif mom < MOM_THRESHOLD:
-            equity_pct = 40
-        else:
-            equity_pct = 50
-
-    bond_pct = 100 - equity_pct
-
-    # Build reason
-    regime_cn = "多頭" if regime == "bull" else "空頭"
-    mom_dir = "↑" if mom > 0 else "↓" if mom < 0 else "→"
-    reason = f"MA{MA_SHORT} {'>' if regime == 'bull' else '<'} MA{MA_LONG} ({regime_cn}) + {MOM_WINDOW}d動能 {mom:+.2f}% {mom_dir}"
-
-    return {
-        "price": price,
-        "ma_short": ma_s,
-        "ma_long": ma_l,
-        "momentum": mom,
-        "regime": regime,
-        "equity_pct": equity_pct,
-        "bond_pct": bond_pct,
-        "reason": reason,
-    }
-
-
-# ── DB Operations ──────────────────────────────────────────────────────
-def init_rotation_table(con: sqlite3.Connection):
-    # Auto-migration: drop old schema if it exists (v1 had 'level' and 'slope' columns)
-    try:
-        cols = [r[1] for r in con.execute("PRAGMA table_info(rotation_history)").fetchall()]
-        if cols and 'level' in cols:
-            con.execute("DROP TABLE rotation_history")
-            print("  [MIGRATION] Dropped old rotation_history (v1 schema)")
-    except Exception:
-        pass
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS rotation_history (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            date        TEXT NOT NULL UNIQUE,
-            equity_pct  INTEGER NOT NULL,
-            bond_pct    INTEGER NOT NULL,
-            price       REAL,
-            ma_short    REAL,
-            ma_long     REAL,
-            momentum    REAL,
-            regime      TEXT,
-            action      TEXT,
-            reason      TEXT,
-            created_at  TEXT DEFAULT (datetime('now'))
-        )
-    """)
-    con.commit()
-
-
-def get_current_allocation(con: sqlite3.Connection) -> dict | None:
-    """Get most recent allocation. Returns None if no history."""
-    row = con.execute(
-        "SELECT date, equity_pct, bond_pct, price, ma_short, ma_long, momentum, regime, action, reason "
-        "FROM rotation_history ORDER BY date DESC LIMIT 1"
-    ).fetchone()
-    if not row:
-        return None
-    return {
-        "date": row[0], "equity_pct": row[1], "bond_pct": row[2],
-        "price": row[3], "ma_short": row[4], "ma_long": row[5],
-        "momentum": row[6], "regime": row[7], "action": row[8], "reason": row[9],
-    }
-
-
-def record_allocation(con: sqlite3.Connection, date: str, result: dict, action: str):
-    con.execute(
-        """INSERT OR REPLACE INTO rotation_history
-           (date, equity_pct, bond_pct, price, ma_short, ma_long, momentum, regime, action, reason)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (date, result["equity_pct"], result["bond_pct"], result["price"],
-         result["ma_short"], result["ma_long"], result["momentum"],
-         result["regime"], action, result["reason"]),
-    )
-    con.commit()
-
-
-def get_history(con: sqlite3.Connection, limit: int = 20) -> list[dict]:
-    rows = con.execute(
-        """SELECT date, equity_pct, bond_pct, price, momentum, regime, action, reason
-           FROM rotation_history ORDER BY date DESC LIMIT ?""",
-        (limit,),
-    ).fetchall()
-    return [
-        {"date": r[0], "equity_pct": r[1], "bond_pct": r[2], "price": r[3],
-         "momentum": r[4], "regime": r[5], "action": r[6], "reason": r[7]}
-        for r in rows
-    ]
-
-
 # ── HTML Rendering ─────────────────────────────────────────────────────
 CSS = """
 :root { color-scheme: light dark; }
 body { font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
-       max-width: 800px; margin: 1.5em auto; padding: 0 1em; line-height: 1.6; }
+       max-width: 900px; margin: 1.5em auto; padding: 0 1em; line-height: 1.6; }
 h1 { font-size: 1.5em; border-bottom: 2px solid #888; padding-bottom: .3em; }
+h2 { font-size: 1.2em; margin-top: 2em; border-bottom: 1px solid #ccc; padding-bottom: .2em; }
 .meta { color: #555; font-size: .9em; }
+
+/* Pair Tabs */
+.pair-section { margin: 1.5em 0; padding: 1em; border: 1px solid #e0e0e0; border-radius: 10px; }
+.pair-title { font-size: 1.1em; font-weight: 700; margin-bottom: .5em; }
 
 /* Allocation Bar */
 .bar-container { margin: 1.5em 0; }
@@ -279,7 +130,9 @@ h1 { font-size: 1.5em; border-bottom: 2px solid #888; padding-bottom: .3em; }
 @media (prefers-color-scheme: dark) {
   body { background: #1a1a1a; color: #ddd; }
   h1 { border-color: #555; }
+  h2 { border-color: #444; }
   .meta { color: #999; }
+  .pair-section { background: #222; border-color: #444; }
   .bar-track { background: #333; }
   .data-card { background: #2a2a2a; border-color: #444; }
   .action-box { background: #2d2a1e; border-color: #6d5b00; }
@@ -302,7 +155,6 @@ h1 { font-size: 1.5em; border-bottom: 2px solid #888; padding-bottom: .3em; }
 
 
 def render_bar(equity_pct: int) -> str:
-    """Render the allocation bar."""
     bond_pct = 100 - equity_pct
     bar = '<div class="bar-track">'
     if equity_pct > 0:
@@ -310,28 +162,24 @@ def render_bar(equity_pct: int) -> str:
     if bond_pct > 0:
         bar += f'<div class="bar-fill bond" style="left:{equity_pct}%;width:{bond_pct}%">{bond_pct}% 債</div>'
     bar += '</div>'
-
     ticks = '<div class="bar-ticks">'
     for i in range(0, 11):
         ticks += f'<div class="bar-tick" style="left:{i * 10}%"></div>'
         ticks += f'<div class="bar-tick-label" style="left:{i * 10}%">{i * 10}</div>'
     ticks += '</div>'
-
     return f'<div class="bar-container">{bar}{ticks}</div>'
 
 
-def render_data_cards(result: dict, bond_price: float) -> str:
-    """Render indicator cards."""
+def render_data_cards(pair: dict, result: dict, bond_price: float) -> str:
     mom_cls = 'pos' if result['momentum'] >= 0 else 'neg'
     mom_arrow = '↑' if result['momentum'] >= 0 else '↓'
     ma_diff = result['ma_short'] - result['ma_long']
     ma_cls = 'pos' if ma_diff >= 0 else 'neg'
-
     return f'''<div class="data-grid">
   <div class="data-card">
-    <h3>{EQUITY_CODE} 收盤</h3>
+    <h3>{pair["equity_code"]} 收盤</h3>
     <div class="value">${result["price"]:.2f}</div>
-    <div style="font-size:.8em;color:#888">{EQUITY_NAME}</div>
+    <div style="font-size:.8em;color:#888">{pair["equity_name"]}</div>
   </div>
   <div class="data-card">
     <h3>MA{MA_SHORT} vs MA{MA_LONG}</h3>
@@ -341,41 +189,36 @@ def render_data_cards(result: dict, bond_price: float) -> str:
   <div class="data-card">
     <h3>{MOM_WINDOW}日動能</h3>
     <div class="value {mom_cls}">{result["momentum"]:+.3f}% {mom_arrow}</div>
-    <div style="font-size:.8em;color:#888">{BOND_CODE}: ${bond_price:.2f}</div>
+    <div style="font-size:.8em;color:#888">{pair["bond_code"]}: ${bond_price:.2f}</div>
   </div>
 </div>'''
 
 
 def render_action(current_alloc: dict | None, new_alloc: dict) -> str:
-    """Render the action recommendation."""
-    if current_alloc is None or current_alloc["equity_pct"] != new_alloc["equity_pct"]:
-        old_pct = current_alloc["equity_pct"] if current_alloc else 50
-        new_pct = new_alloc["equity_pct"]
-        delta = new_pct - old_pct
-        if delta > 0:
-            action_text = f"買入 {delta}% 股 / 賣出 {delta}% 債"
-        else:
-            action_text = f"賣出 {abs(delta)}% 股 / 買入 {abs(delta)}% 債"
-        return f'''<div class="action-box">
-  <div class="action-title">⚡ 調整配置: {old_pct}% → {new_pct}% 股</div>
-  <div class="action-detail">{action_text}</div>
+    if current_alloc is None or current_alloc["equity_pct"] == new_alloc["equity_pct"]:
+        return f'''<div class="action-box hold">
+  <div class="action-title">✋ 目前 {new_alloc["equity_pct"]}% 股 / {new_alloc["bond_pct"]}% 債</div>
   <div class="action-detail">{new_alloc["reason"]}</div>
 </div>'''
+    old_pct = current_alloc["equity_pct"]
+    new_pct = new_alloc["equity_pct"]
+    delta = new_pct - old_pct
+    if delta > 0:
+        action_text = f"買入 {delta}% 股 / 賣出 {delta}% 債"
     else:
-        return f'''<div class="action-box hold">
-  <div class="action-title">✋ 維持 {new_alloc["equity_pct"]}% 股 / {new_alloc["bond_pct"]}% 債</div>
+        action_text = f"賣出 {abs(delta)}% 股 / 買入 {abs(delta)}% 債"
+    return f'''<div class="action-box">
+  <div class="action-title">⚡ 調整配置: {old_pct}% → {new_pct}% 股</div>
+  <div class="action-detail">{action_text}</div>
   <div class="action-detail">{new_alloc["reason"]}</div>
 </div>'''
 
 
 def render_history(history: list[dict]) -> str:
-    """Render history table."""
     if not history:
         return '<p class="meta">尚無紀錄。</p>'
-
     rows = []
     for i, h in enumerate(history):
-        # Compare with previous (older) entry
         if i == 0:
             cls, arrow = 'hold', '—'
         else:
@@ -385,10 +228,8 @@ def render_history(history: list[dict]) -> str:
                 cls, arrow = 'down', '▼'
             else:
                 cls, arrow = 'hold', '—'
-
         regime_badge = '🔴' if h['regime'] == 'bull' else '🟢'
         mom_cls = 'pos' if (h['momentum'] or 0) >= 0 else 'neg'
-
         rows.append(f'''<tr>
   <td>{h['date']}</td>
   <td class="{cls}">{arrow} {h['equity_pct']}/{h['bond_pct']}</td>
@@ -396,19 +237,37 @@ def render_history(history: list[dict]) -> str:
   <td class="{mom_cls}">{h['momentum']:+.2f}%</td>
   <td>{regime_badge}</td>
 </tr>''')
-
     return f'''<table class="history-table">
   <thead><tr><th>日期</th><th>股/債</th><th>收盤</th><th>{MOM_WINDOW}d動能</th><th>Regime</th></tr></thead>
   <tbody>{''.join(rows)}</tbody>
 </table>'''
 
 
-def render_full_html(result: dict, current_alloc: dict | None, bond_price: float, history: list[dict]) -> str:
-    """Assemble the full HTML page."""
-    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+def render_pair_section(pair: dict, result: dict, current_alloc: dict | None,
+                        bond_price: float, history: list[dict]) -> str:
+    """Render one pair's full section."""
     regime_cls = 'regime-bull' if result['regime'] == 'bull' else 'regime-bear'
     regime_cn = '多頭' if result['regime'] == 'bull' else '空頭'
+    parts = [
+        '<div class="pair-section">',
+        f'<div class="pair-title">{pair["label"]}</div>',
+        f'<span class="regime-badge {regime_cls}">{regime_cn}</span>',
+        '<div class="bar-labels">',
+        f'<span class="bar-label-eq">← {pair["equity_code"]} {pair["equity_name"]}</span>',
+        f'<span class="bar-label-bd">{pair["bond_code"]} {pair["bond_name"]} →</span>',
+        '</div>',
+        render_bar(result['equity_pct']),
+        render_data_cards(pair, result, bond_price),
+        render_action(current_alloc, result),
+        '<h2 style="font-size:1em;border:none;margin:.5em 0 0">歷史</h2>',
+        render_history(history),
+        '</div>',
+    ]
+    return '\n'.join(parts)
 
+
+def render_full_html(pair_results: list[dict]) -> str:
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
     html = ['<!DOCTYPE html>', '<html lang="zh-Hant"><head>',
             '<meta charset="utf-8">',
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -416,39 +275,27 @@ def render_full_html(result: dict, current_alloc: dict | None, bond_price: float
             f'<style>{CSS}</style>',
             '</head><body>',
             '<h1>ETF 股債輪動</h1>',
-            f'<p class="meta">更新：{now} | MA{MA_SHORT}/MA{MA_LONG} + {MOM_WINDOW}d動能</p>',
-            '',
-            # Regime badge
-            f'<span class="regime-badge {regime_cls}">{regime_cn} ({result["regime"]})</span>',
-            '',
-            # Bar
-            '<div class="bar-labels">',
-            f'<span class="bar-label-eq">← {EQUITY_CODE} 股</span>',
-            f'<span class="bar-label-bd">{BOND_CODE} 債 →</span>',
-            '</div>',
-            render_bar(result['equity_pct']),
-            '',
-            # Data cards
-            render_data_cards(result, bond_price),
-            '',
-            # Action
-            render_action(current_alloc, result),
-            '',
-            # History
-            '<h2>配置歷史</h2>',
-            render_history(history),
-            '</body></html>']
-
+            f'<p class="meta">更新：{now} | MA{MA_SHORT}/MA{MA_LONG} + {MOM_WINDOW}d動能 {MOM_THRESHOLD}%</p>',
+            '']
+    for pr in pair_results:
+        html.append(render_pair_section(
+            pr["pair"], pr["result"], pr["current"], pr["bond_price"], pr["history"]))
+    html.append('</body></html>')
     return '\n'.join(html)
 
 
 # ── Main ───────────────────────────────────────────────────────────────
 def main():
-    p = argparse.ArgumentParser(description='ETF Equity-Bond Rotation (Dual Speed)')
+    global VERIFY_SSL
+    p = argparse.ArgumentParser(description='ETF Equity-Bond Rotation (Fast Signal, Dual Pair)')
     p.add_argument('--db', required=True, help='Path to etf_data.db')
     p.add_argument('--out', required=True, help='Output HTML path')
     p.add_argument('--json', default='rotation_signal.json', help='Output JSON path')
+    p.add_argument('--insecure', action='store_true', help='Skip SSL verification (local corporate proxy)')
     args = p.parse_args()
+    if args.insecure:
+        VERIFY_SSL = False
+        requests.packages.urllib3.disable_warnings()
 
     db_path = Path(args.db)
     if not db_path.exists():
@@ -458,77 +305,86 @@ def main():
     con = sqlite3.connect(str(db_path))
     init_rotation_table(con)
 
-    # 1. Fetch prices
-    print(f'[Rotation] Fetching {EQUITY_CODE}...')
-    eq_closes = fetch_with_fallback(EQUITY_CODE)
-    time.sleep(1)
-    print(f'[Rotation] Fetching {BOND_CODE}...')
-    bd_closes = fetch_with_fallback(BOND_CODE)
+    # Fetch prices for all unique ETFs
+    all_codes = set()
+    for pair in PAIRS:
+        all_codes.add(pair["equity_code"])
+        all_codes.add(pair["bond_code"])
 
-    if not eq_closes:
-        print(f'[FATAL] Cannot fetch {EQUITY_CODE} prices', file=sys.stderr)
-        con.close()
-        sys.exit(1)
+    print(f'[Rotation] Fetching {len(all_codes)} ETFs: {sorted(all_codes)}')
+    price_cache = {}
+    for code in sorted(all_codes):
+        print(f'  Fetching {code}...')
+        price_cache[code] = fetch_with_fallback(code)
+        time.sleep(0.5)
 
-    bond_price = bd_closes[-1] if bd_closes else 0.0
-    if not bd_closes:
-        print(f'  [WARN] Cannot fetch {BOND_CODE}, using 0 for display')
-
-    # 2. Calculate allocation
-    result = determine_allocation(eq_closes)
-    print(f"  Price: ${result['price']:.2f}")
-    print(f"  MA{MA_SHORT}: {result['ma_short']:.3f}, MA{MA_LONG}: {result['ma_long']:.3f}")
-    print(f"  {MOM_WINDOW}d Momentum: {result['momentum']:+.4f}%")
-    print(f"  Regime: {result['regime']}")
-    print(f"  Allocation: {result['equity_pct']}% equity / {result['bond_pct']}% bond")
-    print(f"  Reason: {result['reason']}")
-
-    # 3. Record in DB
+    # Process each pair
     today = datetime.now().strftime('%Y-%m-%d')
-    current = get_current_allocation(con)
-    if current and current['equity_pct'] != result['equity_pct']:
-        delta = result['equity_pct'] - current['equity_pct']
-        if delta > 0:
-            action = f'BUY_EQ_{delta}%'
-        else:
-            action = f'SELL_EQ_{abs(delta)}%'
-    else:
-        action = 'HOLD'
-    record_allocation(con, today, result, action)
+    pair_results = []
+    signals = []
 
-    # 4. Get history
-    history = get_history(con, limit=20)
+    for pair in PAIRS:
+        eq_closes = price_cache.get(pair["equity_code"])
+        bd_closes = price_cache.get(pair["bond_code"])
+
+        if not eq_closes:
+            print(f'  [FATAL] Cannot fetch {pair["equity_code"]}', file=sys.stderr)
+            continue
+
+        bond_price = bd_closes[-1] if bd_closes else 0.0
+        result = determine_allocation(eq_closes)
+
+        print(f'  [{pair["id"]}] Price: ${result["price"]:.2f} | '
+              f'MA{MA_SHORT}: {result["ma_short"]:.3f}, MA{MA_LONG}: {result["ma_long"]:.3f} | '
+              f'{MOM_WINDOW}d mom: {result["momentum"]:+.4f}% | '
+              f'Regime: {result["regime"]} | {result["equity_pct"]}%/{result["bond_pct"]}%')
+
+        # DB: compare + record
+        current = get_latest_allocation(con, pair["id"])
+        if current and current['equity_pct'] != result['equity_pct']:
+            delta = result['equity_pct'] - current['equity_pct']
+            action = f'BUY_EQ_{delta}%' if delta > 0 else f'SELL_EQ_{abs(delta)}%'
+        else:
+            action = 'HOLD'
+        record_allocation(con, today, pair["id"], result, action)
+        history = get_history(con, pair["id"], limit=20)
+
+        pair_results.append({
+            "pair": pair, "result": result, "current": current,
+            "bond_price": bond_price, "history": history,
+        })
+
+        signals.append({
+            "pair_id": pair["id"],
+            "label": pair["label"],
+            "equity": {"code": pair["equity_code"], "name": pair["equity_name"],
+                       "price": result["price"]},
+            "bond": {"code": pair["bond_code"], "name": pair["bond_name"],
+                     "price": bond_price},
+            "indicators": {
+                "ma_short": round(result["ma_short"], 4),
+                "ma_long": round(result["ma_long"], 4),
+                "momentum": round(result["momentum"], 4),
+            },
+            "regime": result["regime"],
+            "target": {"equity_pct": result["equity_pct"], "bond_pct": result["bond_pct"]},
+            "previous": ({"equity_pct": current["equity_pct"], "bond_pct": current["bond_pct"]}
+                         if current else None),
+            "action": action,
+            "reason": result["reason"],
+        })
+
     con.close()
 
-    # 5. Render HTML
-    html = render_full_html(result, current, bond_price, history)
+    # Render HTML
+    html = render_full_html(pair_results)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding='utf-8')
     print(f'[Rotation] HTML → {args.out}')
 
-    # 6. Write JSON signal (for future trading system)
-    signal = {
-        'date': today,
-        'equity': {'code': EQUITY_CODE, 'name': EQUITY_NAME, 'price': result['price']},
-        'bond': {'code': BOND_CODE, 'name': BOND_NAME, 'price': bond_price},
-        'indicators': {
-            'ma_short': round(result['ma_short'], 4),
-            'ma_long': round(result['ma_long'], 4),
-            'momentum': round(result['momentum'], 4),
-        },
-        'regime': result['regime'],
-        'target': {
-            'equity_pct': result['equity_pct'],
-            'bond_pct': result['bond_pct'],
-        },
-        'current': {
-            'equity_pct': current['equity_pct'] if current else 50,
-            'bond_pct': current['bond_pct'] if current else 50,
-        } if current else None,
-        'action': action,
-        'reason': result['reason'],
-    }
+    # Write JSON signal
+    signal = {'date': today, 'pairs': signals}
     json_path = Path(args.json)
     json_path.write_text(json.dumps(signal, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f'[Rotation] JSON → {args.json}')
