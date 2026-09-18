@@ -1,0 +1,53 @@
+name: ETF Rotation Signal
+
+on:
+  # 盤中 10:00 TW (02:00 UTC) + 盤後 16:00 TW (08:00 UTC)
+  schedule:
+    - cron: '0 2 * * 1-5'    # 週一到週五 台北 10:00
+    - cron: '0 8 * * 1-5'    # 週一到週五 台北 16:00
+  # 手動觸發
+  workflow_dispatch:
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+
+    env:
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 從 R2 拿最新 DB
+      - name: Download DB from R2
+        run: |
+          python scripts/r2_sync.py download etf_data.db Ezmoney/etf_data.db
+          if [ -f Ezmoney/etf_data.db ]; then
+            echo "DB downloaded: $(wc -c < Ezmoney/etf_data.db) bytes"
+          else
+            echo "No DB found — creating fresh"
+            mkdir -p Ezmoney
+            touch Ezmoney/etf_data.db
+          fi
+
+      # 跑 rotation signal (fetch + strategy + compare + notify)
+      - name: Run rotation signal
+        run: python rotation_signal.py --db Ezmoney/etf_data.db
+        timeout-minutes: 5
+
+      # 上傳更新後的 DB 回 R2
+      - name: Upload DB to R2
+        run: python scripts/r2_sync.py upload Ezmoney/etf_data.db etf_data.db
