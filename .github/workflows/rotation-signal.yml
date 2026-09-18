@@ -8,6 +8,11 @@ on:
   # 手動觸發
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   signal:
     runs-on: ubuntu-latest
@@ -48,6 +53,38 @@ jobs:
         run: python rotation_signal.py --db Ezmoney/etf_data.db
         timeout-minutes: 5
 
+      # 產生 rotation.html
+      - name: Generate rotation report
+        run: python rotation_report.py --db Ezmoney/etf_data.db --out docs/rotation.html
+        timeout-minutes: 5
+
+      # 產生其他報告（確保 deploy 時整個 site 完整）
+      - name: Generate slope analysis
+        run: python analyze.py --db Ezmoney/etf_data.db --out docs/index.html
+        timeout-minutes: 5
+
+      - name: Fetch stock prices + TA report
+        run: |
+          python fetch_prices.py --db Ezmoney/etf_data.db
+          python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
+        timeout-minutes: 10
+
       # 上傳更新後的 DB 回 R2
       - name: Upload DB to R2
         run: python scripts/r2_sync.py upload Ezmoney/etf_data.db etf_data.db
+
+      # 部署到 GH Pages
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy-gh-pages:
+    needs: signal
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
