@@ -19,28 +19,41 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
 def _send_message(text: str) -> bool:
-    """Send a message to Telegram. Returns True on success."""
+    """Send a message to all configured Telegram chat IDs. Returns True if all succeeded."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        print("  [WARN] TELEGRAM_BOT_TOKEN not set")
+        return False
+
+    # Support multiple chat IDs: TELEGRAM_CHAT_ID, TELEGRAM_CHAT_ID_2, ...
+    chat_ids = []
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if chat_id:
+        chat_ids.append(chat_id)
+    chat_id_2 = os.environ.get("TELEGRAM_CHAT_ID_2", "")
+    if chat_id_2:
+        chat_ids.append(chat_id_2)
 
-    if not token or not chat_id:
-        print("  [WARN] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set")
+    if not chat_ids:
+        print("  [WARN] No TELEGRAM_CHAT_ID set")
         return False
 
-    try:
-        r = requests.post(
-            TELEGRAM_API.format(token=token),
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=10,
-        )
-        data = r.json()
-        if not data.get("ok"):
-            print(f"  [ERR] Telegram API: {data}")
-            return False
-        return True
-    except Exception as e:
-        print(f"  [ERR] Telegram send failed: {e}")
-        return False
+    all_ok = True
+    for cid in chat_ids:
+        try:
+            r = requests.post(
+                TELEGRAM_API.format(token=token),
+                json={"chat_id": cid, "text": text, "parse_mode": "HTML"},
+                timeout=10,
+            )
+            data = r.json()
+            if not data.get("ok"):
+                print(f"  [ERR] Telegram API (chat {cid}): {data}")
+                all_ok = False
+        except Exception as e:
+            print(f"  [ERR] Telegram send to {cid} failed: {e}")
+            all_ok = False
+    return all_ok
 
 
 def format_alert(alert: dict) -> str:
@@ -67,8 +80,12 @@ def format_alert(alert: dict) -> str:
             f"買入 {alert['bond_code']} {abs(alert['delta'])}%"
         )
 
+    # Include run ID if available
+    run_id = os.environ.get("RUN_ID", "")
+    id_tag = f" | #{run_id}" if run_id else ""
+
     return (
-        f"📊 <b>ETF 輪動訊號</b> | {alert['time']}\n"
+        f"📊 <b>ETF 輪動訊號</b>{id_tag} | {alert['time']}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📌 {alert['label']}\n"
         f"{regime_emoji} {regime_cn} | 1d動能: {alert['momentum']:+.2f}%\n"
