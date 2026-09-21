@@ -34,8 +34,8 @@ VERIFY_SSL = True  # Set False with --insecure (local corporate proxy)
 
 
 # ── Price Fetching ─────────────────────────────────────────────────────
-def fetch_closes(ticker: str) -> list[float] | None:
-    """Fetch 1y daily close prices. Returns list of floats or None on failure."""
+def fetch_data(ticker: str) -> dict | None:
+    """Fetch 1y daily data. Returns {'dates': [...], 'closes': [...]} or None."""
     url = YAHOO_CHART_URL.format(ticker=ticker)
     params = {"range": "1y", "interval": "1d"}
     try:
@@ -49,23 +49,29 @@ def fetch_closes(ticker: str) -> list[float] | None:
         if "chart" not in data or not data["chart"].get("result"):
             return None
         result = data["chart"]["result"][0]
-        closes = result["indicators"]["quote"][0]["close"]
-        closes = [c for c in closes if c is not None]
-        return closes if len(closes) >= MIN_DATA else None
+        ts = result["timestamp"]
+        raw_closes = result["indicators"]["quote"][0]["close"]
+        pairs = [(t, c) for t, c in zip(ts, raw_closes) if c is not None]
+        if len(pairs) < MIN_DATA:
+            return None
+        from datetime import datetime as _dt, timezone as _tz
+        dates = [_dt.fromtimestamp(t, tz=_tz.utc).strftime('%Y-%m-%d') for t, c in pairs]
+        closes = [c for t, c in pairs]
+        return {"dates": dates, "closes": closes}
     except Exception as e:
         print(f"  [ERR] {ticker}: {e}")
         return None
 
 
-def fetch_with_fallback(code: str) -> list[float] | None:
-    """Try .TW, .TWO, then no suffix. Handles TWSE and TPEx listings."""
+def fetch_with_fallback(code: str) -> dict | None:
+    """Try .TW, .TWO, then no suffix. Returns {'dates': [...], 'closes': [...]} or None."""
     for suffix in (".TW", ".TWO", ""):
         ticker = f"{code}{suffix}"
         print(f"  Trying {ticker}...")
-        closes = fetch_closes(ticker)
-        if closes:
-            print(f"  OK: {len(closes)} data points")
-            return closes
+        data = fetch_data(ticker)
+        if data:
+            print(f"  OK: {len(data['closes'])} data points (last: {data['dates'][-1]})")
+            return data
     return None
 
 
@@ -319,34 +325,35 @@ def main():
         time.sleep(0.5)
 
     # Process each pair
-    today = datetime.now().strftime('%Y-%m-%d')
     pair_results = []
     signals = []
 
     for pair in PAIRS:
-        eq_closes = price_cache.get(pair["equity_code"])
-        bd_closes = price_cache.get(pair["bond_code"])
+        eq_data = price_cache.get(pair["equity_code"])
+        bd_data = price_cache.get(pair["bond_code"])
 
-        if not eq_closes:
+        if not eq_data:
             print(f'  [FATAL] Cannot fetch {pair["equity_code"]}', file=sys.stderr)
             continue
 
-        bond_price = bd_closes[-1] if bd_closes else 0.0
+        eq_closes = eq_data["closes"]
+        trading_date = eq_data["dates"][-1]  # Use actual trading date, not now()
+        bond_price = bd_data["closes"][-1] if bd_data else 0.0
         result = determine_allocation(eq_closes)
 
-        print(f'  [{pair["id"]}] Price: ${result["price"]:.2f} | '
+        print(f'  [{pair["id"]}] Date: {trading_date} | Price: ${result["price"]:.2f} | '
               f'MA{MA_SHORT}: {result["ma_short"]:.3f}, MA{MA_LONG}: {result["ma_long"]:.3f} | '
               f'{MOM_WINDOW}d mom: {result["momentum"]:+.4f}% | '
               f'Regime: {result["regime"]} | {result["equity_pct"]}%/{result["bond_pct"]}%')
 
-        # DB: compare + record
+        # DB: compare + record (using trading_date, not datetime.now())
         current = get_latest_allocation(con, pair["id"])
         if current and current['equity_pct'] != result['equity_pct']:
             delta = result['equity_pct'] - current['equity_pct']
             action = f'BUY_EQ_{delta}%' if delta > 0 else f'SELL_EQ_{abs(delta)}%'
         else:
             action = 'HOLD'
-        record_allocation(con, today, pair["id"], result, action)
+        record_allocation(con, trading_date, pair["id"], result, action)
         history = get_history(con, pair["id"], limit=20)
 
         pair_results.append({
@@ -384,7 +391,7 @@ def main():
     print(f'[Rotation] HTML → {args.out}')
 
     # Write JSON signal
-    signal = {'date': today, 'pairs': signals}
+    signal = {'date': datetime.now().strftime('%Y-%m-%d %H:%M'), 'pairs': signals}
     json_path = Path(args.json)
     json_path.write_text(json.dumps(signal, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f'[Rotation] JSON → {args.json}')
