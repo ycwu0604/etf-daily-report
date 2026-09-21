@@ -39,7 +39,8 @@ VERIFY_SSL = True  # Set False with --insecure (local corporate proxy)
 
 
 # ── Price Fetching ─────────────────────────────────────────────────────
-def fetch_closes(ticker: str) -> list[float] | None:
+def fetch_data(ticker: str) -> dict | None:
+    """Fetch 1y daily data. Returns {'dates': [...], 'closes': [...]} or None."""
     url = YAHOO_CHART_URL.format(ticker=ticker)
     params = {"range": "1y", "interval": "1d"}
     try:
@@ -53,20 +54,26 @@ def fetch_closes(ticker: str) -> list[float] | None:
         if "chart" not in data or not data["chart"].get("result"):
             return None
         result = data["chart"]["result"][0]
-        closes = result["indicators"]["quote"][0]["close"]
-        closes = [c for c in closes if c is not None]
-        return closes if len(closes) >= MIN_DATA else None
+        ts = result["timestamp"]
+        raw_closes = result["indicators"]["quote"][0]["close"]
+        pairs = [(t, c) for t, c in zip(ts, raw_closes) if c is not None]
+        if len(pairs) < MIN_DATA:
+            return None
+        from datetime import datetime as _dt, timezone as _tz
+        dates = [_dt.fromtimestamp(t, tz=_tz.utc).strftime('%Y-%m-%d') for t, c in pairs]
+        closes = [c for t, c in pairs]
+        return {"dates": dates, "closes": closes}
     except Exception as e:
         print(f"  [ERR] {ticker}: {e}")
         return None
 
 
-def fetch_with_fallback(code: str) -> list[float] | None:
+def fetch_with_fallback(code: str) -> dict | None:
     for suffix in (".TW", ".TWO", ""):
         ticker = f"{code}{suffix}"
-        closes = fetch_closes(ticker)
-        if closes:
-            return closes
+        data = fetch_data(ticker)
+        if data:
+            return data
     return None
 
 
@@ -100,24 +107,25 @@ def main():
     for code in sorted(all_codes):
         price_cache[code] = fetch_with_fallback(code)
         if price_cache[code]:
-            print(f'  {code}: {len(price_cache[code])} pts, last=${price_cache[code][-1]:.2f}')
+            print(f'  {code}: {len(price_cache[code]["closes"])} pts, last=${price_cache[code]["closes"][-1]:.2f} ({price_cache[code]["dates"][-1]})')
         else:
             print(f'  {code}: FAILED')
         time.sleep(0.5)
 
     # Process each pair
-    today = datetime.now().strftime('%Y-%m-%d')
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
     alerts = []
 
     for pair in PAIRS:
-        eq_closes = price_cache.get(pair["equity_code"])
-        bd_closes = price_cache.get(pair["bond_code"])
+        eq_data = price_cache.get(pair["equity_code"])
+        bd_data = price_cache.get(pair["bond_code"])
 
-        if not eq_closes:
+        if not eq_data:
             print(f'  [WARN] Skip {pair["id"]}: no equity data')
             continue
 
+        eq_closes = eq_data["closes"]
+        trading_date = eq_data["dates"][-1]  # Use actual trading date, not now()
         result = determine_allocation(eq_closes)
         previous = get_latest_allocation(con, pair["id"])
 
@@ -152,8 +160,8 @@ def main():
             action = 'HOLD'
             print(f'  [{pair["id"]}] HOLD: {prev_pct}% → {new_pct}% (diff={delta:+d}%)')
 
-        # Record in DB
-        record_allocation(con, today, pair["id"], result, action)
+        # Record in DB (using trading_date, not datetime.now())
+        record_allocation(con, trading_date, pair["id"], result, action)
 
     con.close()
 
