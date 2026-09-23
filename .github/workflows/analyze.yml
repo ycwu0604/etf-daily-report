@@ -58,6 +58,11 @@ jobs:
         run: python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
         timeout-minutes: 5
 
+      # 產生 rotation.html（否則乾淨覆蓋部署會把它洗掉，造成 404）
+      - name: Generate rotation report
+        run: python rotation_report.py --db Ezmoney/etf_data.db --out docs/rotation.html
+        timeout-minutes: 5
+
       # 上傳更新後的 DB 回 R2（含 rotation_history）
       - name: Upload DB to R2
         run: python scripts/r2_sync.py upload Ezmoney/etf_data.db etf_data.db
