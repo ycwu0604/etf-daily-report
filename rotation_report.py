@@ -17,14 +17,15 @@ import json
 import sqlite3
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
 
 from rotation_strategy import (
     MA_SHORT, MA_LONG, MOM_WINDOW, MOM_THRESHOLD, MIN_DATA, PAIRS,
-    calc_ma, calc_momentum, determine_allocation,
+    EXCHANGE_TZ, calc_ma, calc_momentum, determine_allocation,
+    classify_session, is_weekend, value_on_date,
     init_rotation_table, get_latest_allocation, record_allocation, get_history,
 )
 
@@ -35,7 +36,10 @@ VERIFY_SSL = True  # Set False with --insecure (local corporate proxy)
 
 # ── Price Fetching ─────────────────────────────────────────────────────
 def fetch_data(ticker: str) -> dict | None:
-    """Fetch 1y daily data. Returns {'dates': [...], 'closes': [...]} or None."""
+    """Fetch 1y daily data.
+    Returns {'dates', 'closes', 'last_date', 'intraday'} or None.
+    `dates` are exchange-local dates; `intraday` is True when the last bar is
+    today's still-open session (i.e. not yet a final close)."""
     url = YAHOO_CHART_URL.format(ticker=ticker)
     params = {"range": "1y", "interval": "1d"}
     try:
@@ -54,10 +58,18 @@ def fetch_data(ticker: str) -> dict | None:
         pairs = [(t, c) for t, c in zip(ts, raw_closes) if c is not None]
         if len(pairs) < MIN_DATA:
             return None
-        from datetime import datetime as _dt, timezone as _tz
-        dates = [_dt.fromtimestamp(t, tz=_tz.utc).strftime('%Y-%m-%d') for t, c in pairs]
+        # Use the exchange's timezone so bar dates land on the real trading day.
+        tzname = result.get("meta", {}).get("exchangeTimezoneName") or EXCHANGE_TZ
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(tzname)
+        except Exception:
+            tz = timezone(timedelta(hours=8))
+        dates = [datetime.fromtimestamp(t, tz=tz).strftime('%Y-%m-%d') for t, c in pairs]
         closes = [c for t, c in pairs]
-        return {"dates": dates, "closes": closes}
+        last_date = dates[-1]
+        intraday = classify_session(last_date, tzname=tzname) == "intraday"
+        return {"dates": dates, "closes": closes, "last_date": last_date, "intraday": intraday}
     except Exception as e:
         print(f"  [ERR] {ticker}: {e}")
         return None
@@ -176,14 +188,20 @@ def render_bar(equity_pct: int) -> str:
     return f'<div class="bar-container">{bar}{ticks}</div>'
 
 
-def render_data_cards(pair: dict, result: dict, bond_price: float) -> str:
+def render_data_cards(pair: dict, result: dict, bond_price: float,
+                      intraday: bool = False, momentum_ok: bool = True,
+                      bond_ok: bool = True) -> str:
     mom_cls = 'pos' if result['momentum'] >= 0 else 'neg'
     mom_arrow = '↑' if result['momentum'] >= 0 else '↓'
     ma_diff = result['ma_short'] - result['ma_long']
     ma_cls = 'pos' if ma_diff >= 0 else 'neg'
+    price_label = '盤中' if intraday else '收盤'
+    mom_note = ('<div style="font-size:.75em;color:#b26a00">⚠️ 缺前收盤，動能為近似值</div>'
+                if not momentum_ok else '')
+    bond_note = '' if bond_ok else '（最近可用日）'
     return f'''<div class="data-grid">
   <div class="data-card">
-    <h3>{pair["equity_code"]} 收盤</h3>
+    <h3>{pair["equity_code"]} {price_label}</h3>
     <div class="value">${result["price"]:.2f}</div>
     <div style="font-size:.8em;color:#888">{pair["equity_name"]}</div>
   </div>
@@ -195,7 +213,8 @@ def render_data_cards(pair: dict, result: dict, bond_price: float) -> str:
   <div class="data-card">
     <h3>{MOM_WINDOW}日動能</h3>
     <div class="value {mom_cls}">{result["momentum"]:+.3f}% {mom_arrow}</div>
-    <div style="font-size:.8em;color:#888">{pair["bond_code"]}: ${bond_price:.2f}</div>
+    {mom_note}
+    <div style="font-size:.8em;color:#888">{pair["bond_code"]}: ${bond_price:.2f}{bond_note}</div>
   </div>
 </div>'''
 
@@ -250,20 +269,33 @@ def render_history(history: list[dict]) -> str:
 
 
 def render_pair_section(pair: dict, result: dict, current_alloc: dict | None,
-                        bond_price: float, history: list[dict]) -> str:
+                        bond_price: float, history: list[dict],
+                        asof_date: str = "", intraday: bool = False,
+                        bond_ok: bool = True) -> str:
     """Render one pair's full section."""
     regime_cls = 'regime-bull' if result['regime'] == 'bull' else 'regime-bear'
     regime_cn = '多頭' if result['regime'] == 'bull' else '空頭'
+    asof_bits = []
+    if asof_date:
+        asof_bits.append(f"資料截至 {asof_date}")
+        if intraday:
+            asof_bits.append("（盤中即時，非收盤）")
+        if not bond_ok:
+            asof_bits.append("｜債券為最近可用日")
+    asof_line = (f'<p class="meta" style="font-size:.8em;margin:.2em 0 0">'
+                 f'{" ".join(asof_bits)}</p>') if asof_bits else ""
     parts = [
         '<div class="pair-section">',
         f'<div class="pair-title">{pair["label"]}</div>',
         f'<span class="regime-badge {regime_cls}">{regime_cn}</span>',
+        asof_line,
         '<div class="bar-labels">',
         f'<span class="bar-label-eq">← {pair["equity_code"]} {pair["equity_name"]}</span>',
         f'<span class="bar-label-bd">{pair["bond_code"]} {pair["bond_name"]} →</span>',
         '</div>',
         render_bar(result['equity_pct']),
-        render_data_cards(pair, result, bond_price),
+        render_data_cards(pair, result, bond_price, intraday=intraday,
+                          momentum_ok=result.get("momentum_ok", True), bond_ok=bond_ok),
         render_action(current_alloc, result),
         '<h2 style="font-size:1em;border:none;margin:.5em 0 0">歷史</h2>',
         render_history(history),
@@ -285,7 +317,9 @@ def render_full_html(pair_results: list[dict]) -> str:
             '']
     for pr in pair_results:
         html.append(render_pair_section(
-            pr["pair"], pr["result"], pr["current"], pr["bond_price"], pr["history"]))
+            pr["pair"], pr["result"], pr["current"], pr["bond_price"], pr["history"],
+            asof_date=pr.get("asof_date", ""), intraday=pr.get("intraday", False),
+            bond_ok=pr.get("bond_ok", True)))
     html.append('</body></html>')
     return '\n'.join(html)
 
@@ -337,28 +371,46 @@ def main():
             continue
 
         eq_closes = eq_data["closes"]
-        trading_date = eq_data["dates"][-1]  # Use actual trading date, not now()
-        bond_price = bd_data["closes"][-1] if bd_data else 0.0
-        result = determine_allocation(eq_closes)
+        eq_dates = eq_data["dates"]
+        trading_date = eq_data["last_date"]   # exchange-local date of the last equity bar
+        intraday = eq_data["intraday"]        # True => last bar is today's live session
 
-        print(f'  [{pair["id"]}] Date: {trading_date} | Price: ${result["price"]:.2f} | '
+        # Align the bond price to the equity's as-of date (avoid mixing dates).
+        if bd_data:
+            bond_price, bond_ok = value_on_date(bd_data["dates"], bd_data["closes"], trading_date)
+        else:
+            bond_price, bond_ok = None, False
+        if bond_price is None:
+            bond_price = 0.0
+
+        result = determine_allocation(eq_closes, dates=eq_dates)
+
+        print(f'  [{pair["id"]}] Date: {trading_date}{" (盤中)" if intraday else ""} | '
+              f'Price: ${result["price"]:.2f} | '
               f'MA{MA_SHORT}: {result["ma_short"]:.3f}, MA{MA_LONG}: {result["ma_long"]:.3f} | '
-              f'{MOM_WINDOW}d mom: {result["momentum"]:+.4f}% | '
+              f'{MOM_WINDOW}d mom: {result["momentum"]:+.4f}%'
+              f'{" (gap)" if not result.get("momentum_ok", True) else ""} | '
               f'Regime: {result["regime"]} | {result["equity_pct"]}%/{result["bond_pct"]}%')
 
-        # DB: compare + record (using trading_date, not datetime.now())
+        # DB: always compare; record only on a final, valid trading day.
         current = get_latest_allocation(con, pair["id"])
         if current and current['equity_pct'] != result['equity_pct']:
             delta = result['equity_pct'] - current['equity_pct']
             action = f'BUY_EQ_{delta}%' if delta > 0 else f'SELL_EQ_{abs(delta)}%'
         else:
             action = 'HOLD'
-        record_allocation(con, trading_date, pair["id"], result, action)
+        persist_ok = (not intraday) and (not is_weekend(trading_date)) and (result["price"] or 0) > 0
+        if persist_ok:
+            record_allocation(con, trading_date, pair["id"], result, action)
+        else:
+            print(f'  [{pair["id"]}] skip persist (intraday={intraday}, '
+                  f'weekend={is_weekend(trading_date)})')
         history = get_history(con, pair["id"], limit=20)
 
         pair_results.append({
             "pair": pair, "result": result, "current": current,
-            "bond_price": bond_price, "history": history,
+            "bond_price": bond_price, "bond_ok": bond_ok,
+            "history": history, "asof_date": trading_date, "intraday": intraday,
         })
 
         signals.append({
@@ -372,8 +424,11 @@ def main():
                 "ma_short": round(result["ma_short"], 4),
                 "ma_long": round(result["ma_long"], 4),
                 "momentum": round(result["momentum"], 4),
+                "momentum_ok": result.get("momentum_ok", True),
             },
             "regime": result["regime"],
+            "asof_date": trading_date,
+            "intraday": intraday,
             "target": {"equity_pct": result["equity_pct"], "bond_pct": result["bond_pct"]},
             "previous": ({"equity_pct": current["equity_pct"], "bond_pct": current["bond_pct"]}
                          if current else None),
