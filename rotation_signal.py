@@ -18,14 +18,15 @@ import os
 import sqlite3
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
 
 from rotation_strategy import (
     MA_SHORT, MA_LONG, MOM_WINDOW, MOM_THRESHOLD, MIN_DATA, PAIRS,
-    determine_allocation,
+    EXCHANGE_TZ, determine_allocation,
+    classify_session, is_weekend,
     init_rotation_table, get_latest_allocation, record_allocation,
 )
 from notify_telegram import send_rotation_alert
@@ -40,7 +41,10 @@ VERIFY_SSL = True  # Set False with --insecure (local corporate proxy)
 
 # ── Price Fetching ─────────────────────────────────────────────────────
 def fetch_data(ticker: str) -> dict | None:
-    """Fetch 1y daily data. Returns {'dates': [...], 'closes': [...]} or None."""
+    """Fetch 1y daily data.
+    Returns {'dates', 'closes', 'last_date', 'intraday'} or None.
+    `dates` are exchange-local dates; `intraday` is True when the last bar is
+    today's still-open session (i.e. not yet a final close)."""
     url = YAHOO_CHART_URL.format(ticker=ticker)
     params = {"range": "1y", "interval": "1d"}
     try:
@@ -59,10 +63,18 @@ def fetch_data(ticker: str) -> dict | None:
         pairs = [(t, c) for t, c in zip(ts, raw_closes) if c is not None]
         if len(pairs) < MIN_DATA:
             return None
-        from datetime import datetime as _dt, timezone as _tz
-        dates = [_dt.fromtimestamp(t, tz=_tz.utc).strftime('%Y-%m-%d') for t, c in pairs]
+        # Use the exchange's timezone so bar dates land on the real trading day.
+        tzname = result.get("meta", {}).get("exchangeTimezoneName") or EXCHANGE_TZ
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(tzname)
+        except Exception:
+            tz = timezone(timedelta(hours=8))
+        dates = [datetime.fromtimestamp(t, tz=tz).strftime('%Y-%m-%d') for t, c in pairs]
         closes = [c for t, c in pairs]
-        return {"dates": dates, "closes": closes}
+        last_date = dates[-1]
+        intraday = classify_session(last_date, tzname=tzname) == "intraday"
+        return {"dates": dates, "closes": closes, "last_date": last_date, "intraday": intraday}
     except Exception as e:
         print(f"  [ERR] {ticker}: {e}")
         return None
@@ -125,8 +137,10 @@ def main():
             continue
 
         eq_closes = eq_data["closes"]
-        trading_date = eq_data["dates"][-1]  # Use actual trading date, not now()
-        result = determine_allocation(eq_closes)
+        eq_dates = eq_data["dates"]
+        trading_date = eq_data["last_date"]   # exchange-local date of the last equity bar
+        intraday = eq_data["intraday"]        # True => last bar is today's live session
+        result = determine_allocation(eq_closes, dates=eq_dates)
         previous = get_latest_allocation(con, pair["id"])
 
         prev_pct = previous["equity_pct"] if previous else 50
@@ -160,8 +174,14 @@ def main():
             action = 'HOLD'
             print(f'  [{pair["id"]}] HOLD: {prev_pct}% → {new_pct}% (diff={delta:+d}%)')
 
-        # Record in DB (using trading_date, not datetime.now())
-        record_allocation(con, trading_date, pair["id"], result, action)
+        # Record in DB only on a final, valid trading day (avoids intraday/weekend
+        # ghost rows). Intraday runs still evaluate + alert; they just don't persist.
+        persist_ok = (not intraday) and (not is_weekend(trading_date)) and (result["price"] or 0) > 0
+        if persist_ok:
+            record_allocation(con, trading_date, pair["id"], result, action)
+        else:
+            print(f'  [{pair["id"]}] skip persist (intraday={intraday}, '
+                  f'weekend={is_weekend(trading_date)})')
 
     con.close()
 
