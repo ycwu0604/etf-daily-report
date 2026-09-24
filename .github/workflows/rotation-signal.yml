@@ -1,11 +1,11 @@
-name: ETF Slope Analysis
+name: ETF Rotation Signal
 
 on:
-  # 每天台北 20:00 (12:00 UTC) 跟 06:00 (22:00 UTC 當日),單獨跑分析
+  # 盤中 10:00 TW (02:00 UTC) + 盤後 16:00 TW (08:00 UTC)
   schedule:
-    - cron: '0 12 * * 1-5'   # 週一到週五 台北 20:00
-    - cron: '0 22 * * 1-5'   # 週一到週五 台北 06:00
-  # 手動觸發 — Actions 頁面按 Run workflow
+    - cron: '0 2 * * 1-5'    # 週一到週五 台北 10:00
+    - cron: '0 8 * * 1-5'    # 週一到週五 台北 16:00
+  # 手動觸發
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
   id-token: write
 
 jobs:
-  build:
+  signal:
     runs-on: ubuntu-latest
 
     env:
@@ -22,6 +22,10 @@ jobs:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_CHAT_ID_2: ${{ secrets.TELEGRAM_CHAT_ID_2 }}
+      RUN_ID: ${{ github.run_number }}
 
     steps:
       - uses: actions/checkout@v4
@@ -34,66 +38,56 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 從 R2 拿最新 DB(由 etf-daily.yml 維護)
+      # 從 R2 拿最新 DB
       - name: Download DB from R2
         run: |
           python scripts/r2_sync.py download etf_data.db Ezmoney/etf_data.db
           if [ -f Ezmoney/etf_data.db ]; then
             echo "DB downloaded: $(wc -c < Ezmoney/etf_data.db) bytes"
           else
-            echo "No DB found — exiting"
-            exit 0
+            echo "No DB found — creating fresh"
+            mkdir -p Ezmoney
+            touch Ezmoney/etf_data.db
           fi
 
-      # 跑斜率分析 → docs/index.html
-      - name: Generate slope analysis HTML
-        run: python analyze.py --db Ezmoney/etf_data.db --out docs/index.html
-
-      # 抓股價 + 技術分析 → docs/ta_report.html
-      - name: Fetch stock prices
-        run: python fetch_prices.py --db Ezmoney/etf_data.db
-        timeout-minutes: 10
-
-      - name: Generate TA report
-        run: python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
+      # 跑 rotation signal (fetch + strategy + compare + notify)
+      - name: Run rotation signal
+        run: python rotation_signal.py --db Ezmoney/etf_data.db
         timeout-minutes: 5
+
+      # 產生 rotation.html
+      - name: Generate rotation report
+        run: python rotation_report.py --db Ezmoney/etf_data.db --out docs/rotation.html
+        timeout-minutes: 5
+
+      # 產生其他報告（確保 deploy 時整個 site 完整）
+      - name: Generate slope analysis
+        run: python analyze.py --db Ezmoney/etf_data.db --out docs/index.html
+        timeout-minutes: 5
+
+      - name: Fetch stock prices + TA report
+        run: |
+          python fetch_prices.py --db Ezmoney/etf_data.db
+          python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
+        timeout-minutes: 10
 
       # 定案 E advisor 訊號 → docs/e_report.html
       - name: Generate E report
         run: python e_report.py --db Ezmoney/etf_data.db --out docs/e_report.html
         timeout-minutes: 5
 
-      # 產生 rotation.html（否則乾淨覆蓋部署會把它洗掉，造成 404）
-      - name: Generate rotation report
-        run: python rotation_report.py --db Ezmoney/etf_data.db --out docs/rotation.html
-        timeout-minutes: 5
-
-      # 上傳更新後的 DB 回 R2（含 rotation_history）
+      # 上傳更新後的 DB 回 R2
       - name: Upload DB to R2
         run: python scripts/r2_sync.py upload Ezmoney/etf_data.db etf_data.db
 
-      # 把 docs/ 上傳成 GH Pages artifact(必須在 build job 跑,因 deploy job 重新 checkout 拿不到 docs/)
+      # 部署到 GH Pages
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs
 
-      # Telegram 通知
-      - name: Notify Telegram
-        if: always()
-        run: |
-          if [ "${{ job.status }}" = "success" ]; then
-            STATUS="✅"
-          else
-            STATUS="❌"
-          fi
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d "text=${STATUS} ${{ github.workflow }} | ${{ job.status }} | ${{ github.event_name }}"
-
-  # 部署 artifact 到 GitHub Pages
   deploy-gh-pages:
-    needs: build
+    needs: signal
     runs-on: ubuntu-latest
     environment:
       name: github-pages
