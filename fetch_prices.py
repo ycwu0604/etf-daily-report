@@ -98,9 +98,14 @@ def _fetch_ticker(session: requests.Session, stock_code: str, ticker: str, verif
             timeout=15,
             verify=verify,
         )
-        if r.status_code == 429:
-            print(f'  [429] {stock_code} ({ticker}): rate limited, waiting 10s...')
-            time.sleep(10)
+        # 429 rate-limit: retry with backoff (15s, 30s). A single retry is not
+        # enough for large batches (127 holdings) when Yahoo throttles the runner IP.
+        attempt = 0
+        while r.status_code == 429 and attempt < 2:
+            wait = (15, 30)[attempt]
+            print(f'  [429] {stock_code} ({ticker}): rate limited, retry {attempt + 1}/2 in {wait}s...')
+            time.sleep(wait)
+            attempt += 1
             r = session.get(
                 YAHOO_CHART_URL.format(ticker=ticker),
                 params=params,
