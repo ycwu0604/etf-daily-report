@@ -190,11 +190,24 @@ def fetch_fundamentals(session: requests.Session, stock_code: str, ticker: str, 
         return {}
 
 
+def read_codes_file(path: str) -> list:
+    """Read codes from a watchlist-style file (one per line, "code 名稱", # comments)."""
+    items = []
+    for line in Path(path).read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        items.append(line.split(None, 1)[0])
+    return items
+
+
 def main():
     p = argparse.ArgumentParser(description='Fetch stock prices from Yahoo Finance')
     p.add_argument('--db', required=True, help='Path to etf_data.db')
     p.add_argument('--codes', nargs='*', help='Specific stock codes (default: all in DB)')
+    p.add_argument('--codes-file', help='Path to a file of codes (one per line, "code 名稱", # comments). Overrides --codes / daily_holdings.')
     p.add_argument('--insecure', action='store_true', help='Disable SSL verification (corporate proxy)')
+    p.add_argument('--range', default='1y', help='History range: 1y/2y/5y/max (default 1y)')
     args = p.parse_args()
 
     db_path = Path(args.db)
@@ -213,6 +226,11 @@ def main():
 
     if args.codes:
         codes = args.codes
+    elif args.codes_file:
+        codes = read_codes_file(args.codes_file)
+        if not codes:
+            print(f'[FATAL] No codes found in {args.codes_file}', file=sys.stderr)
+            sys.exit(1)
     else:
         codes = [r[0] for r in con.execute(
             'SELECT DISTINCT stock_code FROM daily_holdings').fetchall()]
@@ -222,7 +240,7 @@ def main():
     pe_ok = 0
     today = datetime.now().strftime('%Y-%m-%d')
     for i, code in enumerate(codes, 1):
-        rows = fetch_stock(session, code, verify=verify_ssl)
+        rows = fetch_stock(session, code, verify=verify_ssl, range_=args.range)
         if rows:
             con.executemany(
                 'INSERT OR REPLACE INTO daily_prices (stock_code, date, open, high, low, close, volume) '
