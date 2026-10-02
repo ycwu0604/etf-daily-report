@@ -180,7 +180,7 @@ def render_etf_tab(key, pos_results, neg_results):
     return '\n'.join(html)
 
 
-def render_html(tabs, summary, output_path, title='ETF 持股 E 訊號'):
+def render_html(tabs, summary, output_path, title='ETF 持股訊號'):
     """tabs: list of (key, label, pos_results, neg_results)
     summary: dict from summarize() for the top 今日訊號 bar"""
     today = datetime.now().strftime('%Y-%m-%d %H:%M')
