@@ -59,6 +59,33 @@ jobs:
         run: python fetch_prices.py --db Ezmoney/etf_data.db --codes-file watchlist.txt --range 5y
         timeout-minutes: 10
 
+      # 診斷: 持股歷史深度 + 2330 實際 bbw_pct 結果(一次分辨 資料不足 vs 計算問題)
+      - name: Diagnose holdings history depth
+        run: |
+          python - <<'PY'
+          import sqlite3, statistics
+          from ta_report import load_prices
+          from e_report import analyze_e
+          con = sqlite3.connect('Ezmoney/etf_data.db')
+          holdings = [r[0] for r in con.execute('SELECT DISTINCT stock_code FROM daily_holdings')]
+          counts = [con.execute('SELECT COUNT(*) FROM daily_prices WHERE stock_code=?', (c,)).fetchone()[0] for c in holdings]
+          if counts:
+              print('holdings: %d' % len(holdings))
+              print('bars   min=%d  median=%d  max=%d' % (min(counts), int(statistics.median(counts)), max(counts)))
+              print('holdings <80 bars  (no BBW): %d' % sum(1 for n in counts if n < 80))
+              print('holdings <200 bars (no MR) : %d' % sum(1 for n in counts if n < 200))
+          else:
+              print('NO holdings prices found!')
+          df = load_prices(con, '2330')
+          print('2330 rows in db: %d' % (0 if df is None else len(df)))
+          res = analyze_e(con, '2330')
+          if res:
+              print('2330 analyze_e: regime=%s stage=%s pos=%.2f target=%.2f bbw_pct=%s'
+                    % (res['regime'], res['stage'], res['position'], res['target'], res.get('bbw_pct')))
+          else:
+              print('2330 analyze_e: None (data insufficient)')
+          PY
+
       - name: Generate TA report
         run: python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
         timeout-minutes: 5
