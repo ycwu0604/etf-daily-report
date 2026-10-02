@@ -23,11 +23,14 @@ from ta_report import (get_candidates, load_prices, CSS, TAB_JS,
 from position_advisor import precompute, advisor_at
 
 MIN_BARS = 60  # enough for ADX14 + MACD26 + BB20 to warm up
-ACTION_COLOR = {'加碼': '#c62828', '建倉': '#7b1fa2', '持有': '#546e7a',
+ENTRY = '#4527a0'  # 深紫 — unified entry-signal color (均值回歸買點 / 壓縮突破 / 建倉)
+ACTION_COLOR = {'加碼': '#c62828', '建倉': ENTRY, '持有': '#546e7a',
                 '減碼': '#e65100', '離場': '#2e7d32'}
 
+# 10 cols: 位置+目標倉位 → merged 倉位 (mini-bar + target#); 建倉 column dropped
+#          MR → 均值回歸, SB → 壓縮突破, BBW分位 → BB帶寬
 HEADER = ('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>趨勢</th>'
-          '<th>階段</th><th>位置</th><th>目標倉位</th><th>動作</th><th>建倉</th></tr></thead>')
+          '<th>階段</th><th>倉位</th><th>動作</th><th>均值回歸</th><th>壓縮突破</th><th>BB帶寬</th></tr></thead>')
 
 
 # ── E signal for one stock ──────────────────────────────────
@@ -46,24 +49,50 @@ def analyze_e(con, stock_code):
 def render_e_row(code, name, res):
     if res is None:
         return (f'<tr><td class="code">{code}</td><td>{name}</td>'
-                f'<td colspan="7" class="muted">(資料不足)</td></tr>')
+                f'<td colspan="8" class="muted">(資料不足)</td></tr>')
     stage, regime = res['stage'], res['regime']
-    pos, target, action, jin, close = res['position'], res['target'], res['action'], res['jin_cang'], res['close']
-    flags = ' | '.join(res['flags']) if res.get('flags') else ''
+    pos, target, action, close = res['position'], res['target'], res['action'], res['close']
     bg, tc = STAGE_COLORS.get(stage, '#fff'), STAGE_TEXT.get(stage, '#333')
     ac = ACTION_COLOR.get(action, '#555')
-    jin_cell = '<b style="color:#7b1fa2">Y</b>' if jin else 'N'
-    note = f'<span class="sig-note">{flags}</span>' if flags else ''
+    # 倉位: mini-bar = 帶內位置(pos) / 數字 = 目標倉位(target, 下降趨勢→0)
+    poscell = (f'<span class="poscell">'
+               f'<span class="posbar"><span class="posfill" style="width:{pos*100:.0f}%"></span></span>'
+               f'<b>{target:.0f}%</b></span>')
+    # 均值回歸 (買點 = 進場訊號 → 深紫)
+    if res.get('mr_gate'):
+        mrc = f'<b style="color:{ENTRY}">買點</b>'
+    elif res.get('mr_dip'):
+        mrc = '觀察'
+    else:
+        mrc = '—'
+    # 壓縮突破 (突破進場 = 進場訊號 → 深紫)
+    if res.get('sb_entry'):
+        sb_cell = f'<b style="color:{ENTRY}">突破進場</b>'
+    elif res.get('sb_squeeze'):
+        sb_cell = '擠壓中'
+    else:
+        sb_cell = '—'
+    # BB帶寬
+    b = res.get('bbw_pct')
+    if b is None:
+        bbw_cell = '—'
+    else:
+        p = b * 100
+        if p < 25: tag, bc = '窄', '#1565c0'
+        elif p > 75: tag, bc = '寬', '#e65100'
+        else: tag, bc = '中', '#546e7a'
+        bbw_cell = f'<b style="color:{bc}">{p:.0f}%</b> {tag}'
     return f'''<tr>
   <td class="code">{code}</td>
   <td>{name}</td>
   <td>{close:.2f}</td>
   <td>{regime}</td>
   <td><span class="stage" style="background:{bg};color:{tc}">{stage}</span></td>
-  <td>{pos*100:.0f}%</td>
-  <td><b>{target:.0f}%</b></td>
-  <td><span style="color:{ac};font-weight:700">{action}</span>{note}</td>
-  <td>{jin_cell}</td>
+  <td>{poscell}</td>
+  <td><span style="color:{ac};font-weight:700">{action}</span></td>
+  <td>{mrc}</td>
+  <td>{sb_cell}</td>
+  <td>{bbw_cell}</td>
 </tr>'''
 
 
@@ -74,9 +103,73 @@ def render_section(title, cls, results):
         for code, name, res in results:
             html.append(render_e_row(code, name, res))
     else:
-        html.append('<tr><td colspan="9" class="muted">(無候選)</td></tr>')
+        html.append('<tr><td colspan="10" class="muted">(無候選)</td></tr>')
     html += ['</tbody></table>', '</div>', '</div>']
     return '\n'.join(html)
+
+
+# ── 今日訊號摘要 (aggregate over UNIQUE codes across all tabs) ──
+def summarize(all_results):
+    """all_results: list of (code, res) where res is not None. Dedupe by code
+    (same code = same E signal regardless of which ETF tab it appears in)."""
+    seen = {}
+    for code, res in all_results:
+        if code not in seen:
+            seen[code] = res
+    c = {'mr': 0, 'sb': 0, '加碼': 0, '建倉': 0, '減碼': 0, '離場': 0}
+    for res in seen.values():
+        if res.get('mr_gate'):
+            c['mr'] += 1
+        if res.get('sb_entry'):
+            c['sb'] += 1
+        a = res['action']
+        if a in c:
+            c[a] += 1
+    c['total'] = len(seen)
+    return c
+
+
+def render_summary(c):
+    """One-line actionable signal summary bar. Entry counts (均值回歸/壓縮突破) in 深紫."""
+    chips = ['<span class="sig-sum-label">今日訊號</span>']
+    chips.append(f'<span class="chip chip-entry">均值回歸買點 <b>{c["mr"]}</b></span>')
+    chips.append(f'<span class="chip chip-entry">壓縮突破 <b>{c["sb"]}</b></span>')
+    for a in ('加碼', '建倉', '減碼', '離場'):
+        cls = 'chip-entry' if a == '建倉' else 'chip'
+        chips.append(f'<span class="{cls}">{a} <b>{c[a]}</b></span>')
+    chips.append(f'<span class="chip chip-muted">共 <b>{c["total"]}</b> 檔</span>')
+    return f'<div class="sig-summary">{"".join(chips)}</div>'
+
+
+E_EXTRA_CSS = """
+/* 倉位 mini-bar (bar=帶內位置, number=目標倉位) */
+.poscell { white-space: nowrap; }
+.posbar { display: inline-block; width: 44px; height: 9px; background: #e0e0e0;
+          border-radius: 5px; vertical-align: middle; overflow: hidden; margin-right: .45em; }
+.posfill { display: block; height: 100%; background: #546e7a; border-radius: 5px; }
+/* 今日訊號摘要 */
+.sig-summary { display: flex; flex-wrap: wrap; gap: .5em; align-items: center;
+               margin: 1em 0; padding: .7em 1em; background: #f5f5f5;
+               border: 1px solid #e0e0e0; border-radius: 8px; }
+.sig-sum-label { font-weight: 700; margin-right: .3em; }
+.chip { font-size: .9em; padding: .2em .7em; border-radius: 12px; background: #eceff1; white-space: nowrap; }
+.chip b { font-size: 1.1em; }
+.chip-entry { background: rgba(69,39,160,.12); color: #4527a0; }
+.chip-entry b { color: #4527a0; }
+.chip-muted { background: #f0f0f0; color: #888; }
+@media (prefers-color-scheme: dark) {
+  .posbar { background: #3a3a3a; }
+  .sig-summary { background: #242424; border-color: #3a3a3a; }
+  .chip { background: #2e2e2e; }
+  .chip-entry { background: rgba(69,39,160,.25); color: #b39ddb; }
+  .chip-entry b { color: #b39ddb; }
+  .chip-muted { background: #2a2a2a; color: #888; }
+}
+@media (max-width: 768px) {
+  .posbar { width: 32px; }
+  .sig-summary { padding: .5em .7em; gap: .4em; }
+}
+"""
 
 
 def render_etf_tab(key, pos_results, neg_results):
@@ -87,14 +180,17 @@ def render_etf_tab(key, pos_results, neg_results):
     return '\n'.join(html)
 
 
-def render_html(tabs, output_path):
-    """tabs: list of (key, label, pos_results, neg_results)"""
+def render_html(tabs, summary, output_path, title='ETF 持股 E 訊號'):
+    """tabs: list of (key, label, pos_results, neg_results)
+    summary: dict from summarize() for the top 今日訊號 bar"""
     today = datetime.now().strftime('%Y-%m-%d %H:%M')
     h = ['<!DOCTYPE html>', '<html lang="zh-Hant"><head>', '<meta charset="utf-8">',
          '<meta name="viewport" content="width=device-width, initial-scale=1">',
-         '<title>ETF 持股 E 訊號</title>', f'<style>{CSS}</style>', '</head><body>',
-         '<h1>ETF 持股 E 訊號</h1>', f'<p class="meta">{today}</p>',
-         '<p class="ind">目標倉位=帶內位置×100 (下降趨勢→0)｜建倉=獨立訊號 (ADX↑ + 初升/主升 + 位置&lt;70% + MACD↑)</p>',
+         f'<title>{title}</title>', f'<style>{CSS}{E_EXTRA_CSS}</style>', '</head><body>',
+         f'<h1>{title}</h1>', f'<p class="meta">{today}</p>',
+         render_summary(summary),
+         '<p class="ind">倉位: 長條=帶內位置、數字=目標倉位(下降趨勢→0)｜'
+         '<b style="color:#4527a0">深紫粗體=進場訊號</b>(均值回歸買點 / 壓縮突破 / 建倉)</p>',
          '<div class="tabs">']
     for i, (key, label, _, _) in enumerate(tabs):
         active = ' active' if i == 0 else ''
@@ -150,8 +246,15 @@ def main():
             tabs.append((code, ETF_DISPLAY.get(code, code), pos_r, neg_r))
 
     con.close()
+    # 今日訊號摘要: aggregate unique codes across all tabs
+    all_results = []
+    for (key, label, pos_r, neg_r) in tabs:
+        for code, name, res in pos_r + neg_r:
+            if res is not None:
+                all_results.append((code, res))
+    summary = summarize(all_results)
     print(f'[E] Rendering → {args.out}')
-    render_html(tabs, args.out)
+    render_html(tabs, summary, args.out)
     print('[DONE]')
 
 
