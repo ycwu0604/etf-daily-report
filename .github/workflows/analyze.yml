@@ -52,7 +52,7 @@ jobs:
       # 抓股價 + 技術分析 → docs/ta_report.html
       - name: Fetch stock prices
         run: python fetch_prices.py --db Ezmoney/etf_data.db
-        timeout-minutes: 10
+        timeout-minutes: 20
 
       # 抓自訂清單(watchlist.txt)股價, 5y 深歷史(供 E 訊號 MR/BBW 暖機)
       - name: Fetch watchlist prices
