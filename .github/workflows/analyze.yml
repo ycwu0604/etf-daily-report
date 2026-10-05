@@ -59,35 +59,6 @@ jobs:
         run: python fetch_prices.py --db Ezmoney/etf_data.db --codes-file watchlist.txt --range 5y
         timeout-minutes: 10
 
-      # 診斷: 2330 深挖 — 找 bbw_pct 為何 NaN(close 有無 null / bb 有無大量 NaN)
-      - name: Diagnose 2330 bbw_pct
-        run: |
-          python - <<'PY'
-          import sqlite3, numpy as np
-          from ta_report import load_prices
-          from position_advisor import precompute
-          con = sqlite3.connect('Ezmoney/etf_data.db')
-          df = load_prices(con, '2330')
-          n = 0 if df is None else len(df)
-          print('=== 2330 deep-dive  n=%d ===' % n)
-          if df is not None:
-              print('close  NaN=%d zeros=%d head=%s tail=%s' % (
-                  int(df['close'].isna().sum()), int((df['close'] == 0).sum()),
-                  df['close'].head(3).tolist(), df['close'].tail(3).tolist()))
-              pc = precompute(df); dfi = pc['dfi']
-              for col in ['bb_mid', 'bb_upper', 'bb_lower']:
-                  s = dfi[col]
-                  print('%-9s NaN=%d last=%s' % (col, int(s.isna().sum()),
-                      None if s.isna().iloc[-1] else round(float(s.iloc[-1]), 3)))
-              bbw, bbw_pct = pc['bbw'], pc['bbw_pct']
-              print('bbw      NaN=%d valid=%d last5=%s' % (
-                  int(np.isnan(bbw).sum()), int((~np.isnan(bbw)).sum()),
-                  [None if np.isnan(x) else round(float(x), 4) for x in bbw[-5:]]))
-              print('bbw_pct  NaN=%d last5=%s' % (
-                  int(np.isnan(bbw_pct).sum()),
-                  [None if np.isnan(x) else round(float(x), 3) for x in bbw_pct[-5:]]))
-          PY
-
       - name: Generate TA report
         run: python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
         timeout-minutes: 5
@@ -116,6 +87,19 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs
+
+      # 發「今日訊號」到 Telegram(只台北 20:00 那支; 只發 TELEGRAM_CHAT_ID, 不发 _2)
+      - name: Send today's signals to Telegram (20:00 Taipei only)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          H=$(TZ=Asia/Taipei date +%H)
+          if [ "$H" -ge 20 ] && [ "$H" -le 22 ]; then
+            python telegram_signal.py --db Ezmoney/etf_data.db --watchlist watchlist.txt
+          else
+            echo "Taipei hour=$H — not the 20:00 run, skipping signal push"
+          fi
 
       # Telegram 通知
       - name: Notify Telegram
