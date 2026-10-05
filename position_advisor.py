@@ -64,14 +64,8 @@ def precompute(df):
             stage[i] = cls["stage"]; direction[i] = cls["direction"]
         except Exception:
             pass
-    # ---- MR dip-buy gate (additive): z<=-1.5 (20d pop-std) & close>MA200, gated by E regime=up ----
-    cser = df["close"]
-    ma20 = cser.rolling(20).mean(); sd20 = cser.rolling(20).std(ddof=0)
-    z20 = ((cser - ma20) / sd20.replace(0, np.nan)).values
-    ma200 = cser.rolling(200).mean().values
-    dip = ((~np.isnan(z20)) & (z20 <= -1.5) & (~np.isnan(ma200)) & (c > ma200)).astype(bool)
-    mr_gate = dip & (regime == "up")
     # ---- BBW percentile (additive): trailing-252d rank of band width, no look-ahead ----
+    # (computed BEFORE the MR gate: the dip-buy below now requires a high-BBW-percentile filter)
     bbw = ((dfi["bb_upper"] - dfi["bb_lower"]) / dfi["bb_mid"].replace(0, np.nan)).values
     bbw_pct = np.full(n, np.nan)
     for i in range(n):
@@ -80,6 +74,20 @@ def precompute(df):
             seg = seg[~np.isnan(seg)]
             if len(seg) >= 60:
                 bbw_pct[i] = float(np.mean(seg <= bbw[i]))
+    # ---- MR dip-buy gate (additive): z<=-1.5 & close>MA200 & regime=up & BBW_pct>0.6 ----
+    # BBW_pct>0.6 = only buy dips when the band sits at a HIGH width percentile.
+    # Validated (mr_bbw_test / mr_long_exit_test): PF ~1.8 -> ~4.4 vs all dips.
+    # NaN bbw_pct fails the gate (NaN>0.6 is False) -> fails closed, matching the backtest.
+    cser = df["close"]
+    ma20 = cser.rolling(20).mean(); sd20 = cser.rolling(20).std(ddof=0)
+    z20 = ((cser - ma20) / sd20.replace(0, np.nan)).values
+    ma200 = cser.rolling(200).mean().values
+    dip = ((~np.isnan(z20)) & (z20 <= -1.5) & (~np.isnan(ma200)) & (c > ma200)).astype(bool)
+    mr_gate = dip & (regime == "up") & (bbw_pct > 0.6)
+    # ---- MR spike-sell gate (mirror of dip-buy): z>=+1.5 & close>MA200, gated by E regime=up ----
+    # This is the SELL/exit for the dip-buy (let it run to +1.5σ). NOT BBW-gated (see backtest).
+    spike = ((~np.isnan(z20)) & (z20 >= 1.5) & (~np.isnan(ma200)) & (c > ma200)).astype(bool)
+    mr_sell_gate = spike & (regime == "up")
     # ---- SB squeeze-breakout (additive): squeeze (last-5 bbw_pct<=25%) + close>bb_upper ----
     sb_squeeze = np.zeros(n, dtype=bool)
     for i in range(n):
@@ -91,7 +99,7 @@ def precompute(df):
     sb_entry = sb_squeeze & sb_breakout
     return dict(dfi=dfi, adx=adx, pdi=pdi, mdi=mdi, regime=regime, pos=pos,
                 macd_slope=macd_slope, bb_target=bb_target, stage=stage, direction=direction, c=c,
-                z20=z20, ma200=ma200, dip=dip, mr_gate=mr_gate,
+                z20=z20, ma200=ma200, dip=dip, mr_gate=mr_gate, mr_sell_gate=mr_sell_gate,
                 bbw=bbw, bbw_pct=bbw_pct,
                 sb_squeeze=sb_squeeze, sb_breakout=sb_breakout, sb_entry=sb_entry)
 
@@ -120,6 +128,7 @@ def advisor_at(pc, i, base_key="pos", adx_mode="down"):
                 jin_cang=jin, action=action, flags=flags,
                 mr_z=(float(pc["z20"][i]) if not np.isnan(pc["z20"][i]) else None),
                 mr_dip=bool(pc["dip"][i]), mr_gate=bool(pc["mr_gate"][i]),
+                mr_sell_gate=bool(pc["mr_sell_gate"][i]),
                 bbw=(float(pc["bbw"][i]) if not np.isnan(pc["bbw"][i]) else None),
                 bbw_pct=(float(pc["bbw_pct"][i]) if not np.isnan(pc["bbw_pct"][i]) else None),
                 sb_squeeze=bool(pc["sb_squeeze"][i]),
