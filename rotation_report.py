@@ -311,6 +311,9 @@ def render_full_html(pair_results: list[dict]) -> str:
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
             '<title>ETF 股債輪動</title>',
             f'<style>{CSS}</style>',
+            '<script async src="https://www.googletagmanager.com/gtag/js?id=G-N5G6CVZ1YJ"></script>',
+            '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
+            'gtag("js",new Date());gtag("config","G-N5G6CVZ1YJ");</script>',
             '</head><body>',
             '<h1>ETF 股債輪動</h1>',
             f'<p class="meta">更新：{now} | MA{MA_SHORT}/MA{MA_LONG} + {MOM_WINDOW}d動能 {MOM_THRESHOLD}%</p>',
