@@ -54,7 +54,11 @@ def render_watchlist(results: list, summary: dict, output_path: str):
     today = datetime.now().strftime('%Y-%m-%d %H:%M')
     h = ['<!DOCTYPE html>', '<html lang="zh-Hant"><head>', '<meta charset="utf-8">',
          '<meta name="viewport" content="width=device-width, initial-scale=1">',
-         '<title>自訂清單 訊號</title>', f'<style>{CSS}{E_EXTRA_CSS}</style>', '</head><body>',
+         '<title>自訂清單 訊號</title>', f'<style>{CSS}{E_EXTRA_CSS}</style>',
+         '<script async src="https://www.googletagmanager.com/gtag/js?id=G-N5G6CVZ1YJ"></script>',
+         '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
+         'gtag("js",new Date());gtag("config","G-N5G6CVZ1YJ");</script>',
+         '</head><body>',
          '<h1>自訂清單 訊號</h1>', f'<p class="meta">{today}</p>',
          render_summary(summary),
          '<p class="ind">倉位: 長條=帶內位置、數字=目標倉位(下降趨勢→0)｜'
