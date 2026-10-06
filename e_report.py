@@ -203,7 +203,11 @@ def render_html(tabs, summary, output_path, title='ETF 持股 訊號'):
     today = datetime.now().strftime('%Y-%m-%d %H:%M')
     h = ['<!DOCTYPE html>', '<html lang="zh-Hant"><head>', '<meta charset="utf-8">',
          '<meta name="viewport" content="width=device-width, initial-scale=1">',
-         f'<title>{title}</title>', f'<style>{CSS}{E_EXTRA_CSS}</style>', '</head><body>',
+          f'<title>{title}</title>', f'<style>{CSS}{E_EXTRA_CSS}</style>',
+          '<script async src="https://www.googletagmanager.com/gtag/js?id=G-N5G6CVZ1YJ"></script>',
+          '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
+          'gtag("js",new Date());gtag("config","G-N5G6CVZ1YJ");</script>',
+          '</head><body>',
          f'<h1>{title}</h1>', f'<p class="meta">{today}</p>',
          render_summary(summary),
          '<p class="ind">倉位: 長條=帶內位置、數字=目標倉位(下降趨勢→0)｜'
