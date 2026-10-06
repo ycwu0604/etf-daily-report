@@ -27,10 +27,10 @@ ENTRY = '#4527a0'  # 深紫 — unified entry-signal color (均值回歸買點 /
 ACTION_COLOR = {'加碼': '#c62828', '建倉': ENTRY, '持有': '#546e7a',
                 '減碼': '#e65100', '離場': '#2e7d32'}
 
-# 10 cols: 位置+目標倉位 → merged 倉位 (mini-bar + target#); 建倉 column dropped
-#          MR → 均值回歸, SB → 壓縮突破, BBW分位 → BB帶寬
+# 11 cols: 位置+目標倉位 → merged 倉位 (mini-bar + target#); 建倉 column dropped
+#          MR → 均值回歸, SB → 壓縮突破, BBW分位 → BB帶寬, 量比 = vol/vol_MA20
 HEADER = ('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>趨勢</th>'
-          '<th>階段</th><th>倉位</th><th>動作</th><th>均值回歸</th><th>壓縮突破</th><th>BB帶寬</th></tr></thead>')
+          '<th>階段</th><th>倉位</th><th>動作</th><th>均值回歸</th><th>壓縮突破</th><th>BB帶寬</th><th>量比</th></tr></thead>')
 
 
 # ── E signal for one stock ──────────────────────────────────
@@ -49,7 +49,7 @@ def analyze_e(con, stock_code):
 def render_e_row(code, name, res):
     if res is None:
         return (f'<tr><td class="code">{code}</td><td>{name}</td>'
-                f'<td colspan="8" class="muted">(資料不足)</td></tr>')
+                f'<td colspan="9" class="muted">(資料不足)</td></tr>')
     stage, regime = res['stage'], res['regime']
     pos, target, action, close = res['position'], res['target'], res['action'], res['close']
     bg, tc = STAGE_COLORS.get(stage, '#fff'), STAGE_TEXT.get(stage, '#333')
@@ -58,9 +58,11 @@ def render_e_row(code, name, res):
     poscell = (f'<span class="poscell">'
                f'<span class="posbar"><span class="posfill" style="width:{pos*100:.0f}%"></span></span>'
                f'<b>{target:.0f}%</b></span>')
-    # 均值回歸 (買點 = 進場訊號 → 深紫)
+    # 均值回歸 (買點 = 進場訊號 → 深紫; 賣點 = 過熱離場訊號 → 綠)
     if res.get('mr_gate'):
         mrc = f'<b style="color:{ENTRY}">買點</b>'
+    elif res.get('mr_sell_gate'):
+        mrc = f'<b style="color:#2e7d32">賣點</b>'
     elif res.get('mr_dip'):
         mrc = '觀察'
     else:
@@ -82,6 +84,17 @@ def render_e_row(code, name, res):
         elif p > 75: tag, bc = '寬', '#e65100'
         else: tag, bc = '中', '#546e7a'
         bbw_cell = f'<b style="color:{bc}">{p:.0f}%</b> {tag}'
+    # 量比 (RVOL = vol / vol_MA20, reference only)
+    rv = res.get('rvol')
+    if rv is None:
+        rvol_cell = '—'
+    else:
+        if rv >= 2.0:
+            rvol_cell = f'<b style="color:#2e7d32">{rv:.1f}x</b>'
+        elif rv >= 1.0:
+            rvol_cell = f'{rv:.1f}x'
+        else:
+            rvol_cell = f'<span style="color:#1565c0">{rv:.1f}x</span>'
     return f'''<tr>
   <td class="code">{code}</td>
   <td>{name}</td>
@@ -93,6 +106,7 @@ def render_e_row(code, name, res):
   <td>{mrc}</td>
   <td>{sb_cell}</td>
   <td>{bbw_cell}</td>
+  <td>{rvol_cell}</td>
 </tr>'''
 
 
@@ -103,7 +117,7 @@ def render_section(title, cls, results):
         for code, name, res in results:
             html.append(render_e_row(code, name, res))
     else:
-        html.append('<tr><td colspan="10" class="muted">(無候選)</td></tr>')
+        html.append('<tr><td colspan="11" class="muted">(無候選)</td></tr>')
     html += ['</tbody></table>', '</div>', '</div>']
     return '\n'.join(html)
 
@@ -116,10 +130,12 @@ def summarize(all_results):
     for code, res in all_results:
         if code not in seen:
             seen[code] = res
-    c = {'mr': 0, 'sb': 0, '加碼': 0, '建倉': 0, '減碼': 0, '離場': 0}
+    c = {'mr': 0, 'mr_sell': 0, 'sb': 0, '加碼': 0, '建倉': 0, '減碼': 0, '離場': 0}
     for res in seen.values():
         if res.get('mr_gate'):
             c['mr'] += 1
+        if res.get('mr_sell_gate'):
+            c['mr_sell'] += 1
         if res.get('sb_entry'):
             c['sb'] += 1
         a = res['action']
@@ -133,6 +149,7 @@ def render_summary(c):
     """One-line actionable signal summary bar. Entry counts (均值回歸/壓縮突破) in 深紫."""
     chips = ['<span class="sig-sum-label">今日訊號</span>']
     chips.append(f'<span class="chip chip-entry">均值回歸買點 <b>{c["mr"]}</b></span>')
+    chips.append(f'<span class="chip">均值回歸賣點 <b>{c["mr_sell"]}</b></span>')
     chips.append(f'<span class="chip chip-entry">壓縮突破 <b>{c["sb"]}</b></span>')
     for a in ('加碼', '建倉', '減碼', '離場'):
         cls = 'chip-entry' if a == '建倉' else 'chip'
@@ -180,7 +197,7 @@ def render_etf_tab(key, pos_results, neg_results):
     return '\n'.join(html)
 
 
-def render_html(tabs, summary, output_path, title='ETF 持股訊號'):
+def render_html(tabs, summary, output_path, title='ETF 持股 訊號'):
     """tabs: list of (key, label, pos_results, neg_results)
     summary: dict from summarize() for the top 今日訊號 bar"""
     today = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -201,6 +218,23 @@ def render_html(tabs, summary, output_path, title='ETF 持股訊號'):
     h += [TAB_JS, '</body></html>']
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text('\n'.join(h), encoding='utf-8')
+
+
+def collect_e_results(con):
+    """Deduped (code, name, res) over ALL ETF candidates — the exact set the
+    e_report page summarizes. Reused by telegram_signal.py so the push matches
+    the page. (Same candidate logic as main(): get_candidates per ETF.)"""
+    seen = {}
+    for code in ALL_ETFS:
+        history, dates = fetch_etf_history(con, code)
+        if not dates:
+            continue
+        analysis = analyze_view(history, dates, code in ETFS_WITH_WEIGHT)
+        for direction in ('pos', 'neg'):
+            for sc, nm in get_candidates(analysis, direction):
+                if sc not in seen:
+                    seen[sc] = (sc, nm, analyze_e(con, sc))
+    return list(seen.values())
 
 
 # ── Main ─────────────────────────────────────────────────────
