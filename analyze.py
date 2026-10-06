@@ -728,6 +728,9 @@ def render_html(per_etf_results, combined_results, dates_meta, output_path):
     html.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
     html.append('<title>ETF 持股分析</title>')
     html.append(f'<style>{CSS}</style>')
+    html.append('<script async src="https://www.googletagmanager.com/gtag/js?id=G-N5G6CVZ1YJ"></script>')
+    html.append('<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
+                'gtag("js",new Date());gtag("config","G-N5G6CVZ1YJ");</script>')
     html.append('</head><body>')
     html.append('<h1>ETF 持股分析</h1>')
     html.append(f'<p class="meta">產出時間:{today}</p>')
