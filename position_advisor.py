@@ -97,11 +97,19 @@ def precompute(df):
             sb_squeeze[i] = True
     sb_breakout = (~np.isnan(dfi["bb_upper"].values)) & (c > dfi["bb_upper"].values)
     sb_entry = sb_squeeze & sb_breakout
+    # ---- RVOL: relative volume (today's vol / 20-day avg vol), reference only ----
+    if "volume" in df.columns:
+        vol = df["volume"].values.astype(float)
+        vol_ma20 = pd.Series(vol).rolling(20).mean().values
+        rvol = np.where((~np.isnan(vol_ma20)) & (vol_ma20 > 0), vol / vol_ma20, np.nan)
+    else:
+        rvol = np.full(n, np.nan)
     return dict(dfi=dfi, adx=adx, pdi=pdi, mdi=mdi, regime=regime, pos=pos,
                 macd_slope=macd_slope, bb_target=bb_target, stage=stage, direction=direction, c=c,
                 z20=z20, ma200=ma200, dip=dip, mr_gate=mr_gate, mr_sell_gate=mr_sell_gate,
                 bbw=bbw, bbw_pct=bbw_pct,
-                sb_squeeze=sb_squeeze, sb_breakout=sb_breakout, sb_entry=sb_entry)
+                sb_squeeze=sb_squeeze, sb_breakout=sb_breakout, sb_entry=sb_entry,
+                rvol=rvol)
 
 # ---------------- advisor (per day) ----------------
 def advisor_at(pc, i, base_key="pos", adx_mode="down"):
@@ -133,7 +141,8 @@ def advisor_at(pc, i, base_key="pos", adx_mode="down"):
                 bbw_pct=(float(pc["bbw_pct"][i]) if not np.isnan(pc["bbw_pct"][i]) else None),
                 sb_squeeze=bool(pc["sb_squeeze"][i]),
                 sb_breakout=bool(pc["sb_breakout"][i]),
-                sb_entry=bool(pc["sb_entry"][i]))
+                sb_entry=bool(pc["sb_entry"][i]),
+                rvol=(float(pc["rvol"][i]) if not np.isnan(pc["rvol"][i]) else None))
 
 # ---------------- backtest (stateful, deadband + cost) ----------------
 def backtest(pc, cost=0.001, deadband=30.0, base_key="pos", adx_mode="down"):
