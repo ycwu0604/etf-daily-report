@@ -31,7 +31,7 @@ def group_signals(results):
     進場訊號(均值回歸/壓縮突破)獨立列; 建倉/減碼/離場 用 action(與網頁 summarize 一致,
     避免 jin_cang + action 雙重計數); 加碼/持有 只計數。
     counts: {'加碼':n, '持有':n}; total = analyzed 檔數."""
-    groups = {'mr': [], 'sb': [], '建倉': [], '減碼': [], '離場': []}
+    groups = {'mr': [], 'mr_sell': [], 'sb': [], '建倉': [], '減碼': [], '離場': []}
     counts = {'加碼': 0, '持有': 0}
     total = 0
     for code, name, res in results:
@@ -42,6 +42,8 @@ def group_signals(results):
         tgt = f" 目標{res['target']:.0f}%" if res['target'] > 0 else ''
         if res.get('mr_gate'):
             groups['mr'].append(tag + tgt)
+        if res.get('mr_sell_gate'):
+            groups['mr_sell'].append(tag + tgt)
         if res.get('sb_entry'):
             groups['sb'].append(tag)
         a = res['action']
@@ -55,8 +57,9 @@ def group_signals(results):
 def build_section(emoji, title, results):
     groups, counts, total = group_signals(results)
     lines = [f'{emoji} {title}({total} 檔)']
-    for key, label in (('mr', '🟣 均值回歸買點'), ('sb', '🟣 壓縮突破'),
-                       ('建倉', '🟣 建倉'), ('減碼', '🔴 減碼'), ('離場', '🟢 離場')):
+    for key, label in (('mr', '🟣 均值回歸買點'), ('mr_sell', '🔴 均值回歸賣點'),
+                       ('sb', '🟣 壓縮突破'), ('建倉', '🟣 建倉'),
+                       ('減碼', '🔴 減碼'), ('離場', '🟢 離場')):
         if groups[key]:
             lines.append(f'{label} · {len(groups[key])}\n  ' + ' / '.join(groups[key]))
     lines.append(f'(加碼 {counts["加碼"]} · 持有 {counts["持有"]})')
@@ -72,12 +75,26 @@ def build_message(db_path: str, watchlist_path: str) -> str:
             wl_results.append((code, resolve_name(con, code, fname), analyze_e(con, code)))
     con.close()
 
+    # Combine all results (deduped by code)
+    seen = {}
+    for code, name, res in hold_results + wl_results:
+        if code not in seen and res is not None:
+            seen[code] = (code, name, res)
+    all_results = list(seen.values())
+
+    from e_report import summarize
+    c = summarize([(code, res) for code, _, res in all_results])
+
     today = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
-    return (f'📊 ETF 今日訊號 {today}\n'
-            f'━━━━━━━━━━━━\n'
-            f'{build_section("🏦", "持股", hold_results)}\n'
-            f'━━━━━━━━━━━━\n'
-            f'{build_section("📌", "自訂清單", wl_results)}')
+    return (f'📊 今日訊號 {today}\n'
+            f'均值回歸買點 {c["mr"]}\n'
+            f'均值回歸賣點 {c["mr_sell"]}\n'
+            f'壓縮突破 {c["sb"]}\n'
+            f'加碼 {c["加碼"]}\n'
+            f'建倉 {c["建倉"]}\n'
+            f'減碼 {c["減碼"]}\n'
+            f'離場 {c["離場"]}\n'
+            f'共 {c["total"]} 檔')
 
 
 def main():
