@@ -75,26 +75,30 @@ def build_message(db_path: str, watchlist_path: str) -> str:
             wl_results.append((code, resolve_name(con, code, fname), analyze_e(con, code)))
     con.close()
 
-    # Combine all results (deduped by code)
-    seen = {}
-    for code, name, res in hold_results + wl_results:
-        if code not in seen and res is not None:
-            seen[code] = (code, name, res)
-    all_results = list(seen.values())
-
     from e_report import summarize
-    c = summarize([(code, res) for code, _, res in all_results])
+    hold_c = summarize([(code, res) for code, _, res in hold_results if res is not None])
+    wl_c = summarize([(code, res) for code, _, res in wl_results if res is not None])
 
     today = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
-    return (f'📊 今日訊號 {today}\n'
-            f'均值回歸買點 {c["mr"]}\n'
-            f'均值回歸賣點 {c["mr_sell"]}\n'
-            f'壓縮突破 {c["sb"]}\n'
-            f'加碼 {c["加碼"]}\n'
-            f'建倉 {c["建倉"]}\n'
-            f'減碼 {c["減碼"]}\n'
-            f'離場 {c["離場"]}\n'
-            f'共 {c["total"]} 檔')
+    return (f'📊 ETF持股訊號 {today}\n'
+            f'均值回歸買點 {hold_c["mr"]}\n'
+            f'均值回歸賣點 {hold_c["mr_sell"]}\n'
+            f'壓縮突破 {hold_c["sb"]}\n'
+            f'加碼 {hold_c["加碼"]}\n'
+            f'建倉 {hold_c["建倉"]}\n'
+            f'減碼 {hold_c["減碼"]}\n'
+            f'離場 {hold_c["離場"]}\n'
+            f'共 {hold_c["total"]} 檔\n'
+            f'━━━━━━━━━━━━\n'
+            f'📊 自訂清單訊號 {today}\n'
+            f'均值回歸買點 {wl_c["mr"]}\n'
+            f'均值回歸賣點 {wl_c["mr_sell"]}\n'
+            f'壓縮突破 {wl_c["sb"]}\n'
+            f'加碼 {wl_c["加碼"]}\n'
+            f'建倉 {wl_c["建倉"]}\n'
+            f'減碼 {wl_c["減碼"]}\n'
+            f'離場 {wl_c["離場"]}\n'
+            f'共 {wl_c["total"]} 檔')
 
 
 def main():
