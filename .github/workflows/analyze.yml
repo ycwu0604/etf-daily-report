@@ -88,18 +88,13 @@ jobs:
         with:
           path: docs
 
-      # 發「今日訊號」到 Telegram(只台北 20:00 那支; 只發 TELEGRAM_CHAT_ID, 不发 _2)
-      - name: Send today's signals to Telegram (20:00 Taipei only)
+      # 發「今日訊號」到 Telegram(每次 run 都發)
+      - name: Send today's signals to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          H=$(TZ=Asia/Taipei date +%H)
-          if [ "$H" -ge 20 ] && [ "$H" -le 22 ]; then
-            python telegram_signal.py --db Ezmoney/etf_data.db --watchlist watchlist.txt
-          else
-            echo "Taipei hour=$H — not the 20:00 run, skipping signal push"
-          fi
+          python telegram_signal.py --db Ezmoney/etf_data.db --watchlist watchlist.txt
 
       # Telegram 通知
       - name: Notify Telegram
