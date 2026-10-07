@@ -88,12 +88,12 @@ def precompute(df):
     # This is the SELL/exit for the dip-buy (let it run to +1.5σ). NOT BBW-gated (see backtest).
     spike = ((~np.isnan(z20)) & (z20 >= 1.5) & (~np.isnan(ma200)) & (c > ma200)).astype(bool)
     mr_sell_gate = spike & (regime == "up") & (bbw_pct > 0.6)
-    # ---- SB squeeze-breakout (additive): squeeze (last-5 bbw_pct<=25%) + close>bb_upper ----
+    # ---- SB squeeze-breakout (additive): squeeze (min-3d bbw_pct<=10%) + close>bb_upper ----
     sb_squeeze = np.zeros(n, dtype=bool)
     for i in range(n):
-        seg = bbw_pct[max(0, i - 4):i + 1]
+        seg = bbw_pct[max(0, i - 2):i + 1]
         seg = seg[~np.isnan(seg)]
-        if len(seg) > 0 and float(np.min(seg)) <= 0.25:
+        if len(seg) > 0 and float(np.min(seg)) <= 0.1:
             sb_squeeze[i] = True
     sb_breakout = (~np.isnan(dfi["bb_upper"].values)) & (c > dfi["bb_upper"].values)
     sb_entry = sb_squeeze & sb_breakout
