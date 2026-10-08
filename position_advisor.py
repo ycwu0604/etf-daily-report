@@ -87,7 +87,7 @@ def precompute(df):
     # ---- MR spike-sell gate (mirror of dip-buy): z>=+1.5 & close>MA200, gated by E regime=up ----
     # This is the SELL/exit for the dip-buy (let it run to +1.5σ). NOT BBW-gated (see backtest).
     spike = ((~np.isnan(z20)) & (z20 >= 1.5) & (~np.isnan(ma200)) & (c > ma200)).astype(bool)
-    mr_sell_gate = spike & (regime == "up") & (bbw_pct > 0.6) & (stage != "主升")
+    mr_sell_gate = spike & (regime == "up") & (bbw_pct > 0.6) & (stage in ("末升", "整理"))
     # ---- SB squeeze-breakout (additive): squeeze (min-3d bbw_pct<=10%) + close>bb_upper ----
     sb_squeeze = np.zeros(n, dtype=bool)
     for i in range(n):
