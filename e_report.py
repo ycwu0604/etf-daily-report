@@ -144,7 +144,7 @@ def summarize(all_results):
     for code, res in all_results:
         if code not in seen:
             seen[code] = res
-    c = {'mr': 0, 'mr_sell': 0, 'sb': 0, '加碼': 0, '建倉': 0, '減碼': 0, '離場': 0}
+    c = {'mr': 0, 'mr_sell': 0, 'sb': 0, '建倉': 0, '離場': 0}
     for res in seen.values():
         if res.get('mr_gate'):
             c['mr'] += 1
@@ -165,9 +165,8 @@ def render_summary(c):
     chips.append(f'<span class="chip chip-entry">均值回歸買點 <b>{c["mr"]}</b></span>')
     chips.append(f'<span class="chip">均值回歸賣點 <b>{c["mr_sell"]}</b></span>')
     chips.append(f'<span class="chip chip-entry">壓縮突破 <b>{c["sb"]}</b></span>')
-    for a in ('加碼', '建倉', '減碼', '離場'):
-        cls = 'chip-entry' if a == '建倉' else 'chip'
-        chips.append(f'<span class="{cls}">{a} <b>{c[a]}</b></span>')
+    chips.append(f'<span class="chip chip-entry">🟣 建倉 <b>{c["建倉"]}</b></span>')
+    chips.append(f'<span class="chip">🟢 離場 <b>{c["離場"]}</b></span>')
     chips.append(f'<span class="chip chip-muted">共 <b>{c["total"]}</b> 檔</span>')
     return f'<div class="sig-summary">{"".join(chips)}</div>'
 
