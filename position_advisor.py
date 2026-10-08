@@ -93,7 +93,7 @@ def precompute(df):
     for i in range(n):
         seg = bbw_pct[max(0, i - 2):i + 1]
         seg = seg[~np.isnan(seg)]
-        if len(seg) > 0 and float(np.min(seg)) <= 0.1:
+        if len(seg) > 0 and float(np.min(seg)) <= 0.10:
             sb_squeeze[i] = True
     sb_breakout = (~np.isnan(dfi["bb_upper"].values)) & (c > dfi["bb_upper"].values)
     sb_entry = sb_squeeze & sb_breakout
@@ -104,12 +104,19 @@ def precompute(df):
         rvol = np.where((~np.isnan(vol_ma20)) & (vol_ma20 > 0), vol / vol_ma20, np.nan)
     else:
         rvol = np.full(n, np.nan)
+    # ---- Price percentile (1Y): where does today's close sit in the past 252d range ----
+    price_pct = np.full(n, np.nan)
+    for i in range(n):
+        seg = c[max(0, i - 251):i + 1]
+        seg = seg[~np.isnan(seg)]
+        if len(seg) >= 60:
+            price_pct[i] = float(np.mean(seg <= c[i]))
     return dict(dfi=dfi, adx=adx, pdi=pdi, mdi=mdi, regime=regime, pos=pos,
                 macd_slope=macd_slope, bb_target=bb_target, stage=stage, direction=direction, c=c,
                 z20=z20, ma200=ma200, dip=dip, mr_gate=mr_gate, mr_sell_gate=mr_sell_gate,
                 bbw=bbw, bbw_pct=bbw_pct,
                 sb_squeeze=sb_squeeze, sb_breakout=sb_breakout, sb_entry=sb_entry,
-                rvol=rvol)
+                rvol=rvol, price_pct=price_pct)
 
 # ---------------- advisor (per day) ----------------
 def advisor_at(pc, i, base_key="pos", adx_mode="down"):
@@ -142,7 +149,8 @@ def advisor_at(pc, i, base_key="pos", adx_mode="down"):
                 sb_squeeze=bool(pc["sb_squeeze"][i]),
                 sb_breakout=bool(pc["sb_breakout"][i]),
                 sb_entry=bool(pc["sb_entry"][i]),
-                rvol=(float(pc["rvol"][i]) if not np.isnan(pc["rvol"][i]) else None))
+                rvol=(float(pc["rvol"][i]) if not np.isnan(pc["rvol"][i]) else None),
+                price_pct=(float(pc["price_pct"][i]) if not np.isnan(pc["price_pct"][i]) else None))
 
 # ---------------- backtest (stateful, deadband + cost) ----------------
 def backtest(pc, cost=0.001, deadband=30.0, base_key="pos", adx_mode="down"):
