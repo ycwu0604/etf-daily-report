@@ -27,10 +27,10 @@ ENTRY = '#4527a0'  # 深紫 — unified entry-signal color (均值回歸買點 /
 ACTION_COLOR = {'加碼': '#c62828', '建倉': ENTRY, '持有': '#546e7a',
                 '減碼': '#e65100', '離場': '#2e7d32'}
 
-# 11 cols: 位置+目標倉位 → merged 倉位 (mini-bar + target#); 建倉 column dropped
-#          MR → 均值回歸, SB → 壓縮突破, BBW分位 → BB帶寬, 量比 = vol/vol_MA20
+# 11 cols: 倉位建議 (mini-bar + target% + 🟢離場/🟣建倉)
+#          MR → 均值回歸, SB → 壓縮突破, BBW分位 → BB帶寬, 量比 = vol/vol_MA20, 年分位 = 價格一年分位
 HEADER = ('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>趨勢</th>'
-          '<th>階段</th><th>倉位</th><th>動作</th><th>均值回歸</th><th>壓縮突破</th><th>BB帶寬</th><th>量比</th></tr></thead>')
+          '<th>階段</th><th>倉位建議</th><th>均值回歸</th><th>壓縮突破</th><th>BB帶寬</th><th>量比</th><th>年分位</th></tr></thead>')
 
 
 # ── E signal for one stock ──────────────────────────────────
@@ -53,11 +53,15 @@ def render_e_row(code, name, res):
     stage, regime = res['stage'], res['regime']
     pos, target, action, close = res['position'], res['target'], res['action'], res['close']
     bg, tc = STAGE_COLORS.get(stage, '#fff'), STAGE_TEXT.get(stage, '#333')
-    ac = ACTION_COLOR.get(action, '#555')
-    # 倉位: mini-bar = 帶內位置(pos) / 數字 = 目標倉位(target, 下降趨勢→0)
+    # 倉位建議: mini-bar + target% + 🟢(離場)/🟣(建倉)
+    badge = ''
+    if action == '建倉':
+        badge = ' <b style="color:#4527a0">🟣</b>'
+    elif action == '離場':
+        badge = ' <b style="color:#2e7d32">🟢</b>'
     poscell = (f'<span class="poscell">'
                f'<span class="posbar"><span class="posfill" style="width:{pos*100:.0f}%"></span></span>'
-               f'<b>{target:.0f}%</b></span>')
+               f'<b>{target:.0f}%</b>{badge}</span>')
     # 均值回歸 (買點 = 進場訊號 → 深紫; 賣點 = 過熱離場訊號 → 綠)
     if res.get('mr_gate'):
         mrc = f'<b style="color:{ENTRY}">買點</b>'
@@ -95,6 +99,16 @@ def render_e_row(code, name, res):
             rvol_cell = f'{rv:.1f}x'
         else:
             rvol_cell = f'<span style="color:#1565c0">{rv:.1f}x</span>'
+    # 1Y分位 (price percentile in 252d window)
+    pp = res.get('price_pct')
+    if pp is None:
+        pp_cell = '—'
+    else:
+        p = pp * 100
+        if p < 25: tag, pc_ = '低', '#1565c0'
+        elif p > 75: tag, pc_ = '高', '#e65100'
+        else: tag, pc_ = '中', '#546e7a'
+        pp_cell = f'<b style="color:{pc_}">{p:.0f}%</b> {tag}'
     return f'''<tr>
   <td class="code">{code}</td>
   <td>{name}</td>
@@ -102,11 +116,11 @@ def render_e_row(code, name, res):
   <td>{regime}</td>
   <td><span class="stage" style="background:{bg};color:{tc}">{stage}</span></td>
   <td>{poscell}</td>
-  <td><span style="color:{ac};font-weight:700">{action}</span></td>
   <td>{mrc}</td>
   <td>{sb_cell}</td>
   <td>{bbw_cell}</td>
   <td>{rvol_cell}</td>
+  <td>{pp_cell}</td>
 </tr>'''
 
 
