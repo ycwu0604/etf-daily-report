@@ -29,7 +29,7 @@ from rotation_strategy import (
     classify_session, is_weekend,
     init_rotation_table, get_latest_allocation, record_allocation,
 )
-from notify_telegram import send_rotation_alert
+from notify_telegram import send_rotation_alert, _send_message
 
 # ── Config ─────────────────────────────────────────────────────────────
 ALERT_THRESHOLD = 10  # notify if allocation changes by >= this %
@@ -185,16 +185,42 @@ def main():
 
     con.close()
 
+    # Collect all pair results for daily summary
+    pair_summaries = []
+    for pair in PAIRS:
+        eq_data = price_cache.get(pair["equity_code"])
+        if not eq_data:
+            continue
+        eq_closes = eq_data["closes"]
+        eq_dates = eq_data["dates"]
+        result = determine_allocation(eq_closes, dates=eq_dates)
+        regime_cn = "多頭" if result["regime"] == "bull" else "空頭"
+        pair_summaries.append({
+            "label": pair["label"],
+            "pct": result["equity_pct"],
+            "regime": regime_cn,
+            "momentum": result["momentum"],
+            "delta": result["equity_pct"] - (get_latest_allocation(con, pair["id"]) or {}).get("equity_pct", 50),
+        })
+
     # Send Telegram notification if any alerts
     if alerts:
         print(f'\n[Signal] {len(alerts)} alert(s) to send via Telegram')
         ok = send_rotation_alert(alerts)
         if ok:
-            print('[Signal] Telegram sent ✓')
+            print('[Signal] Telegram alert sent ✓')
         else:
-            print('[Signal] Telegram FAILED (check TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)')
-    else:
-        print('\n[Signal] No alerts (all within threshold)')
+            print('[Signal] Telegram alert FAILED')
+
+    # Always send daily summary
+    today = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
+    lines = [f'📊 ETF 輪動訊號 {today}']
+    for ps in pair_summaries:
+        delta_str = f'{ps["delta"]:+d}%' if ps["delta"] != 0 else '—'
+        lines.append(f'{ps["label"]}: {ps["pct"]}% {ps["regime"]} | 動能{ps["momentum"]:+.1f}% | Δ{delta_str}')
+    summary_msg = '\n'.join(lines)
+    _send_message(summary_msg)
+    print('[Signal] Daily summary sent ✓')
 
     # Write signal JSON (for debugging / future use)
     signal = {
