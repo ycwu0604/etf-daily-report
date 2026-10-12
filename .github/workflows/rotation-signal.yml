@@ -71,9 +71,14 @@ jobs:
           python ta_report.py --db Ezmoney/etf_data.db --out docs/ta_report.html
         timeout-minutes: 10
 
-      # 定案 E advisor 訊號 → docs/e_report.html
+      # 定案 E advisor 訊號 → docs/e_report_full.html
       - name: Generate E report
-        run: python e_report.py --db Ezmoney/etf_data.db --out docs/e_report.html
+        run: python e_report.py --db Ezmoney/etf_data.db --out docs/e_report_full.html
+        timeout-minutes: 5
+
+      # 自訂清單 → docs/watchlist.html
+      - name: Generate watchlist report
+        run: python watchlist_report.py --db Ezmoney/etf_data.db --out docs/watchlist.html
         timeout-minutes: 5
 
       # 上傳更新後的 DB 回 R2
