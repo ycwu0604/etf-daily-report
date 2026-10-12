@@ -183,9 +183,7 @@ def main():
             print(f'  [{pair["id"]}] skip persist (intraday={intraday}, '
                   f'weekend={is_weekend(trading_date)})')
 
-    con.close()
-
-    # Collect all pair results for daily summary
+    # Collect all pair results for daily summary (before con.close())
     pair_summaries = []
     for pair in PAIRS:
         eq_data = price_cache.get(pair["equity_code"])
@@ -195,13 +193,17 @@ def main():
         eq_dates = eq_data["dates"]
         result = determine_allocation(eq_closes, dates=eq_dates)
         regime_cn = "多頭" if result["regime"] == "bull" else "空頭"
+        prev = get_latest_allocation(con, pair["id"])
+        prev_pct = prev["equity_pct"] if prev else 50
         pair_summaries.append({
             "label": pair["label"],
             "pct": result["equity_pct"],
             "regime": regime_cn,
             "momentum": result["momentum"],
-            "delta": result["equity_pct"] - (get_latest_allocation(con, pair["id"]) or {}).get("equity_pct", 50),
+            "delta": result["equity_pct"] - prev_pct,
         })
+
+    con.close()
 
     # Send Telegram notification if any alerts
     if alerts:
