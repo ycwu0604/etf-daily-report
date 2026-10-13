@@ -1,11 +1,14 @@
 """
-ETF Rotation Strategy (v3 - Fast Signal)
-=========================================
-Strategy: MA5/MA20 regime + 1-day momentum
-  - Regime: MA5 vs MA20 (bull/bear)
-  - Timing: 1-day momentum with 0.3% threshold
+ETF Rotation Strategy (v4 - Medium Signal)
+===========================================
+Strategy: MA20/MA60 regime + 3-day momentum
+  - Regime: MA20 vs MA60 (bull/bear)
+  - Timing: 3-day momentum with 0.5% threshold
   - Bull regime: equity 50-100%
   - Bear regime: equity 0-50%
+
+Backtest 2025-09 ~ 2026-10 (269 bars, 00981A):
+  Sharpe 2.96 vs B&H 2.31 | MaxDD -13.2% vs -26.3%
 
 Shared between rotation_report.py and rotation_signal.py.
 
@@ -21,10 +24,10 @@ except Exception:  # pragma: no cover - zoneinfo ships with 3.9+
     ZoneInfo = None
 
 # ── Strategy Parameters ────────────────────────────────────────────────
-MA_SHORT = 5
-MA_LONG = 20
-MOM_WINDOW = 1
-MOM_THRESHOLD = 0.3
+MA_SHORT = 20
+MA_LONG = 60
+MOM_WINDOW = 3
+MOM_THRESHOLD = 0.5
 MIN_DATA = MA_LONG + 5  # minimum closes needed before computing
 
 # Exchange timezone for the bar dates, and the local hour after which a
@@ -404,4 +407,3 @@ def get_history(con, pair_id: str, limit: int = 20) -> list[dict]:
          "momentum": r[4], "regime": r[5], "action": r[6], "reason": r[7]}
         for r in rows
     ]
-
