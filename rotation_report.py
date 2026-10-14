@@ -378,6 +378,14 @@ def main():
         trading_date = eq_data["last_date"]   # exchange-local date of the last equity bar
         intraday = eq_data["intraday"]        # True => last bar is today's live session
 
+        # Guard: if DB has a newer date, our fresh fetch got stale data.
+        # Skip persist to avoid overwriting newer entries.
+        db_latest_row = get_history(con, pair["id"], limit=1)
+        stale_data = False
+        if db_latest_row and db_latest_row[0]["date"] > trading_date:
+            stale_data = True
+            print(f'  [{pair["id"]}] STALE: fetch={trading_date} < DB={db_latest_row[0]["date"]}, skip persist')
+
         # Align the bond price to the equity's as-of date (avoid mixing dates).
         if bd_data:
             bond_price, bond_ok = value_on_date(bd_data["dates"], bd_data["closes"], trading_date)
@@ -402,7 +410,7 @@ def main():
             action = f'BUY_EQ_{delta}%' if delta > 0 else f'SELL_EQ_{abs(delta)}%'
         else:
             action = 'HOLD'
-        persist_ok = (not intraday) and (not is_weekend(trading_date)) and (result["price"] or 0) > 0
+        persist_ok = (not intraday) and (not is_weekend(trading_date)) and (result["price"] or 0) > 0 and not stale_data
         if persist_ok:
             record_allocation(con, trading_date, pair["id"], result, action)
         else:
