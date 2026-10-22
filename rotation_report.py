@@ -378,13 +378,35 @@ def main():
         trading_date = eq_data["last_date"]   # exchange-local date of the last equity bar
         intraday = eq_data["intraday"]        # True => last bar is today's live session
 
-        # Guard: if DB has a newer date, our fresh fetch got stale data.
-        # Skip persist to avoid overwriting newer entries.
-        db_latest_row = get_history(con, pair["id"], limit=1)
-        stale_data = False
-        if db_latest_row and db_latest_row[0]["date"] > trading_date:
-            stale_data = True
-            print(f'  [{pair["id"]}] STALE: fetch={trading_date} < DB={db_latest_row[0]["date"]}, skip persist')
+        # Latest confirmed allocation from the DB (source of truth for the last
+        # final close). Used for the action box, and as the render source when the
+        # fresh fetch turns out to be stale.
+        current = get_latest_allocation(con, pair["id"])
+
+        # Guard: if the DB has a newer date, our fresh fetch got stale data.
+        # Render the DB's latest row instead of the stale fetch so the main panel
+        # stays consistent with the history table (and we don't emit a spurious
+        # rebalance comparing two different dates). Skip persist so the newer
+        # entry is never overwritten.
+        stale_data = bool(current and current["date"] > trading_date)
+        if stale_data:
+            print(f'  [{pair["id"]}] STALE: fetch={trading_date} < DB={current["date"]}, '
+                  f'render from DB, skip persist')
+            result = {
+                "price": current["price"],
+                "ma_short": current["ma_short"],
+                "ma_long": current["ma_long"],
+                "momentum": current["momentum"],
+                "momentum_ok": True,
+                "regime": current["regime"],
+                "equity_pct": current["equity_pct"],
+                "bond_pct": current["bond_pct"],
+                "reason": current["reason"],
+            }
+            trading_date = current["date"]   # asof = DB latest date
+            intraday = False
+        else:
+            result = determine_allocation(eq_closes, dates=eq_dates)
 
         # Align the bond price to the equity's as-of date (avoid mixing dates).
         if bd_data:
@@ -394,8 +416,6 @@ def main():
         if bond_price is None:
             bond_price = 0.0
 
-        result = determine_allocation(eq_closes, dates=eq_dates)
-
         print(f'  [{pair["id"]}] Date: {trading_date}{" (盤中)" if intraday else ""} | '
               f'Price: ${result["price"]:.2f} | '
               f'MA{MA_SHORT}: {result["ma_short"]:.3f}, MA{MA_LONG}: {result["ma_long"]:.3f} | '
@@ -403,8 +423,8 @@ def main():
               f'{" (gap)" if not result.get("momentum_ok", True) else ""} | '
               f'Regime: {result["regime"]} | {result["equity_pct"]}%/{result["bond_pct"]}%')
 
-        # DB: always compare; record only on a final, valid trading day.
-        current = get_latest_allocation(con, pair["id"])
+        # Action box: compare the latest confirmed allocation (current) vs the
+        # displayed target (result). When stale, result mirrors current => HOLD.
         if current and current['equity_pct'] != result['equity_pct']:
             delta = result['equity_pct'] - current['equity_pct']
             action = f'BUY_EQ_{delta}%' if delta > 0 else f'SELL_EQ_{abs(delta)}%'
@@ -415,7 +435,7 @@ def main():
             record_allocation(con, trading_date, pair["id"], result, action)
         else:
             print(f'  [{pair["id"]}] skip persist (intraday={intraday}, '
-                  f'weekend={is_weekend(trading_date)})')
+                  f'weekend={is_weekend(trading_date)}, stale={stale_data})')
         history = get_history(con, pair["id"], limit=20)
 
         pair_results.append({
