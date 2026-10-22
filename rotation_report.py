@@ -188,7 +188,7 @@ def render_bar(equity_pct: int) -> str:
     return f'<div class="bar-container">{bar}{ticks}</div>'
 
 
-def render_data_cards(pair: dict, result: dict, bond_price: float,
+def render_data_cards(pair: dict, result: dict, bond_price: float | None,
                       intraday: bool = False, momentum_ok: bool = True,
                       bond_ok: bool = True) -> str:
     mom_cls = 'pos' if result['momentum'] >= 0 else 'neg'
@@ -199,6 +199,7 @@ def render_data_cards(pair: dict, result: dict, bond_price: float,
     mom_note = ('<div style="font-size:.75em;color:#b26a00">⚠️ 缺前收盤，動能為近似值</div>'
                 if not momentum_ok else '')
     bond_note = '' if bond_ok else '（最近可用日）'
+    bond_display = f"${bond_price:.2f}{bond_note}" if bond_price is not None else "—"
     return f'''<div class="data-grid">
   <div class="data-card">
     <h3>{pair["equity_code"]} {price_label}</h3>
@@ -214,7 +215,7 @@ def render_data_cards(pair: dict, result: dict, bond_price: float,
     <h3>{MOM_WINDOW}日動能</h3>
     <div class="value {mom_cls}">{result["momentum"]:+.3f}% {mom_arrow}</div>
     {mom_note}
-    <div style="font-size:.8em;color:#888">{pair["bond_code"]}: ${bond_price:.2f}{bond_note}</div>
+    <div style="font-size:.8em;color:#888">{pair["bond_code"]}: {bond_display}</div>
   </div>
 </div>'''
 
@@ -327,6 +328,24 @@ def render_full_html(pair_results: list[dict]) -> str:
     return '\n'.join(html)
 
 
+def _result_from_db_row(current: dict) -> dict:
+    """Build a renderable 'result' dict from a DB allocation row (source of truth).
+
+    Used both when a fresh fetch is stale (fall back to the DB's latest close)
+    and in --from-db-only mode (render entirely from the DB, no fetch)."""
+    return {
+        "price": current["price"],
+        "ma_short": current["ma_short"],
+        "ma_long": current["ma_long"],
+        "momentum": current["momentum"],
+        "momentum_ok": True,
+        "regime": current["regime"],
+        "equity_pct": current["equity_pct"],
+        "bond_pct": current["bond_pct"],
+        "reason": current["reason"],
+    }
+
+
 # ── Main ───────────────────────────────────────────────────────────────
 def main():
     global VERIFY_SSL
@@ -335,6 +354,10 @@ def main():
     p.add_argument('--out', required=True, help='Output HTML path')
     p.add_argument('--json', default='rotation_signal.json', help='Output JSON path')
     p.add_argument('--insecure', action='store_true', help='Skip SSL verification (local corporate proxy)')
+    p.add_argument('--from-db-only', action='store_true',
+                   help='Render rotation.html purely from the DB\'s latest row. No Yahoo '
+                        'fetch, no DB write. Use for workflows that only need a consistent '
+                        'rotation.html to avoid a clean-overwrite 404.')
     args = p.parse_args()
     if args.insecure:
         VERIFY_SSL = False
@@ -348,72 +371,79 @@ def main():
     con = sqlite3.connect(str(db_path))
     init_rotation_table(con)
 
-    # Fetch prices for all unique ETFs
-    all_codes = set()
-    for pair in PAIRS:
-        all_codes.add(pair["equity_code"])
-        all_codes.add(pair["bond_code"])
+    from_db_only = args.from_db_only
 
-    print(f'[Rotation] Fetching {len(all_codes)} ETFs: {sorted(all_codes)}')
+    # Fetch prices for all unique ETFs (skipped entirely in --from-db-only mode).
     price_cache = {}
-    for code in sorted(all_codes):
-        print(f'  Fetching {code}...')
-        price_cache[code] = fetch_with_fallback(code)
-        time.sleep(0.5)
+    if not from_db_only:
+        all_codes = set()
+        for pair in PAIRS:
+            all_codes.add(pair["equity_code"])
+            all_codes.add(pair["bond_code"])
+        print(f'[Rotation] Fetching {len(all_codes)} ETFs: {sorted(all_codes)}')
+        for code in sorted(all_codes):
+            print(f'  Fetching {code}...')
+            price_cache[code] = fetch_with_fallback(code)
+            time.sleep(0.5)
+    else:
+        print('[Rotation] --from-db-only: rendering from DB (no fetch, no persist)')
 
     # Process each pair
     pair_results = []
     signals = []
 
     for pair in PAIRS:
-        eq_data = price_cache.get(pair["equity_code"])
-        bd_data = price_cache.get(pair["bond_code"])
-
-        if not eq_data:
-            print(f'  [FATAL] Cannot fetch {pair["equity_code"]}', file=sys.stderr)
-            continue
-
-        eq_closes = eq_data["closes"]
-        eq_dates = eq_data["dates"]
-        trading_date = eq_data["last_date"]   # exchange-local date of the last equity bar
-        intraday = eq_data["intraday"]        # True => last bar is today's live session
-
         # Latest confirmed allocation from the DB (source of truth for the last
-        # final close). Used for the action box, and as the render source when the
-        # fresh fetch turns out to be stale.
+        # final close). Used for the action box, and as the render source in
+        # --from-db-only mode and when a fresh fetch turns out to be stale.
         current = get_latest_allocation(con, pair["id"])
 
-        # Guard: if the DB has a newer date, our fresh fetch got stale data.
-        # Render the DB's latest row instead of the stale fetch so the main panel
-        # stays consistent with the history table (and we don't emit a spurious
-        # rebalance comparing two different dates). Skip persist so the newer
-        # entry is never overwritten.
-        stale_data = bool(current and current["date"] > trading_date)
-        if stale_data:
-            print(f'  [{pair["id"]}] STALE: fetch={trading_date} < DB={current["date"]}, '
-                  f'render from DB, skip persist')
-            result = {
-                "price": current["price"],
-                "ma_short": current["ma_short"],
-                "ma_long": current["ma_long"],
-                "momentum": current["momentum"],
-                "momentum_ok": True,
-                "regime": current["regime"],
-                "equity_pct": current["equity_pct"],
-                "bond_pct": current["bond_pct"],
-                "reason": current["reason"],
-            }
+        if from_db_only:
+            # Read-only mode: render purely from the DB's latest row. No fetch,
+            # no persist. Skip the pair if the DB has no data for it yet.
+            if current is None:
+                print(f'  [{pair["id"]}] --from-db-only: no DB data yet, skipping')
+                continue
+            result = _result_from_db_row(current)
             trading_date = current["date"]   # asof = DB latest date
             intraday = False
+            bd_data = None                   # no fetch -> no bond price
+            stale_data = False
         else:
-            result = determine_allocation(eq_closes, dates=eq_dates)
+            eq_data = price_cache.get(pair["equity_code"])
+            bd_data = price_cache.get(pair["bond_code"])
+
+            if not eq_data:
+                print(f'  [FATAL] Cannot fetch {pair["equity_code"]}', file=sys.stderr)
+                continue
+
+            eq_closes = eq_data["closes"]
+            eq_dates = eq_data["dates"]
+            trading_date = eq_data["last_date"]   # exchange-local date of the last equity bar
+            intraday = eq_data["intraday"]        # True => last bar is today's live session
+
+            # Guard: if the DB has a newer date, our fresh fetch got stale data.
+            # Render the DB's latest row instead of the stale fetch so the main
+            # panel stays consistent with the history table (and we don't emit a
+            # spurious rebalance comparing two different dates). Skip persist so
+            # the newer entry is never overwritten.
+            stale_data = bool(current and current["date"] > trading_date)
+            if stale_data:
+                print(f'  [{pair["id"]}] STALE: fetch={trading_date} < DB={current["date"]}, '
+                      f'render from DB, skip persist')
+                result = _result_from_db_row(current)
+                trading_date = current["date"]   # asof = DB latest date
+                intraday = False
+            else:
+                result = determine_allocation(eq_closes, dates=eq_dates)
 
         # Align the bond price to the equity's as-of date (avoid mixing dates).
+        # In --from-db-only mode there's no fetch, so bond stays None (rendered as "—").
         if bd_data:
             bond_price, bond_ok = value_on_date(bd_data["dates"], bd_data["closes"], trading_date)
         else:
             bond_price, bond_ok = None, False
-        if bond_price is None:
+        if bond_price is None and not from_db_only:
             bond_price = 0.0
 
         print(f'  [{pair["id"]}] Date: {trading_date}{" (盤中)" if intraday else ""} | '
@@ -430,12 +460,13 @@ def main():
             action = f'BUY_EQ_{delta}%' if delta > 0 else f'SELL_EQ_{abs(delta)}%'
         else:
             action = 'HOLD'
-        persist_ok = (not intraday) and (not is_weekend(trading_date)) and (result["price"] or 0) > 0 and not stale_data
+        persist_ok = (not from_db_only) and (not intraday) and (not is_weekend(trading_date)) \
+            and (result["price"] or 0) > 0 and not stale_data
         if persist_ok:
             record_allocation(con, trading_date, pair["id"], result, action)
         else:
-            print(f'  [{pair["id"]}] skip persist (intraday={intraday}, '
-                  f'weekend={is_weekend(trading_date)}, stale={stale_data})')
+            print(f'  [{pair["id"]}] skip persist (from_db_only={from_db_only}, '
+                  f'intraday={intraday}, weekend={is_weekend(trading_date)}, stale={stale_data})')
         history = get_history(con, pair["id"], limit=20)
 
         pair_results.append({
