@@ -15,6 +15,8 @@ Usage:
 import os
 import requests
 
+from rotation_strategy import MOM_WINDOW
+
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
@@ -88,7 +90,7 @@ def format_alert(alert: dict) -> str:
         f"📊 <b>ETF 輪動訊號</b>{id_tag} | {alert['time']}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📌 {alert['label']}\n"
-        f"{regime_emoji} {regime_cn} | 1d動能: {alert['momentum']:+.2f}%\n"
+        f"{regime_emoji} {regime_cn} | {MOM_WINDOW}d動能: {alert['momentum']:+.2f}%\n"
         f"{action_text}\n"
         f"💰 {trade_text}\n"
         f"💵 {alert['equity_code']} 收: ${alert['price']:.2f}\n"
