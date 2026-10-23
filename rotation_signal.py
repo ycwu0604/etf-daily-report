@@ -30,6 +30,7 @@ from rotation_strategy import (
     init_rotation_table, get_latest_allocation, record_allocation,
 )
 from notify_telegram import send_rotation_alert, _send_message
+from notify_line import send_line_alert
 
 # ── Config ─────────────────────────────────────────────────────────────
 ALERT_THRESHOLD = 10  # notify if allocation changes by >= this %
@@ -205,7 +206,7 @@ def main():
 
     con.close()
 
-    # Send Telegram notification if any alerts
+    # Send alerts to Telegram + LINE (in parallel) if any
     if alerts:
         print(f'\n[Signal] {len(alerts)} alert(s) to send via Telegram')
         ok = send_rotation_alert(alerts)
@@ -213,6 +214,13 @@ def main():
             print('[Signal] Telegram alert sent ✓')
         else:
             print('[Signal] Telegram alert FAILED')
+
+        print(f'[Signal] {len(alerts)} alert(s) to send via LINE')
+        ok_line = send_line_alert(alerts)
+        if ok_line:
+            print('[Signal] LINE alert sent ✓')
+        else:
+            print('[Signal] LINE alert FAILED')
 
     # Always send daily summary
     today = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
