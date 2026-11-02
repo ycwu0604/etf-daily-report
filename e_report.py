@@ -19,7 +19,8 @@ from pathlib import Path
 from analyze import (ALL_ETFS, ETFS_WITH_WEIGHT, ETF_DISPLAY,
                      fetch_etf_history, analyze_view)
 from ta_report import (get_candidates, load_prices, CSS, TAB_JS,
-                       STAGE_COLORS, STAGE_TEXT)
+                       STAGE_COLORS, STAGE_TEXT, SIGNAL_COLORS, analyze_stock)
+from ta_classify import generate_signal
 from position_advisor import precompute, advisor_at
 
 MIN_BARS = 60  # enough for ADX14 + MACD26 + BB20 to warm up
@@ -31,6 +32,10 @@ ACTION_COLOR = {'加碼': '#c62828', '建倉': ENTRY, '持有': '#546e7a',
 #          MR → 均值回歸, SB → 壓縮突破, BBW分位 → BB帶寬, 量比 = vol/vol_MA20, 年分位 = 價格一年分位
 HEADER = ('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>趨勢</th>'
           '<th>階段</th><th>倉位建議</th><th>均值回歸</th><th>壓縮突破</th><th>BB帶寬</th><th>量比</th><th>年分位</th></tr></thead>')
+# + MACD訊號 (TA 訊號欄, 取自 ta_classify.generate_signal)
+HEADER_MACD = ('<thead><tr><th>代號</th><th>名稱</th><th>收盤</th><th>趨勢</th>'
+               '<th>階段</th><th>倉位建議</th><th>均值回歸</th><th>壓縮突破</th><th>BB帶寬</th>'
+               '<th>量比</th><th>年分位</th><th>MACD訊號</th></tr></thead>')
 
 
 # ── E signal for one stock ──────────────────────────────────
@@ -45,11 +50,32 @@ def analyze_e(con, stock_code):
     return res
 
 
+# ── MACD 訊號 (TA 訊號欄, 加到 E 表) ───────────────────────
+def macd_signal(con, code, slope_dir):
+    """TA (MACD) 訊號 for one code: (signal, note) via analyze_stock +
+    generate_signal. slope_dir = 'pos'/'neg' (candidate 方向). Returns ('—','')
+    when the code lacks enough data."""
+    ta = analyze_stock(con, code)
+    if ta is None:
+        return ('—', '')
+    r = generate_signal(slope_dir, ta['sr'].get('position', 0.5),
+                        ta['signals'].get('slope_3d', 0), ta.get('pe'))
+    return (r['signal'], r.get('note', ''))
+
+
+def enrich_macd(con, code, res, slope_dir):
+    """Attach MACD 訊號 to an E res dict (in place). No-op when res is None."""
+    if res is not None:
+        res['macd_signal'], res['macd_note'] = macd_signal(con, code, slope_dir)
+    return res
+
+
 # ── HTML rendering (mirrors ta_report style) ─────────────────
-def render_e_row(code, name, res):
+def render_e_row(code, name, res, with_macd=False):
     if res is None:
+        span = 10 if with_macd else 9
         return (f'<tr><td class="code">{code}</td><td>{name}</td>'
-                f'<td colspan="9" class="muted">(資料不足)</td></tr>')
+                f'<td colspan="{span}" class="muted">(資料不足)</td></tr>')
     stage, regime = res['stage'], res['regime']
     pos, target, action, close = res['position'], res['target'], res['action'], res['close']
     bg, tc = STAGE_COLORS.get(stage, '#fff'), STAGE_TEXT.get(stage, '#333')
@@ -109,6 +135,20 @@ def render_e_row(code, name, res):
         elif p > 75: tag, pc_ = '高', '#e65100'
         else: tag, pc_ = '中', '#546e7a'
         pp_cell = f'<b style="color:{pc_}">{p:.0f}%</b> {tag}'
+    # MACD 訊號 cell (e_report only; watchlist 不帶此欄)
+    if with_macd:
+        macd = res.get('macd_signal')
+        if macd and macd != '—':
+            sc = SIGNAL_COLORS.get(macd, '#555')
+            note = res.get('macd_note', '')
+            macd_cell = f'<span style="color:{sc};font-weight:700">{macd}</span>'
+            if note:
+                macd_cell += f'<span class="sig-note">{note}</span>'
+        else:
+            macd_cell = '<span class="muted">—</span>'
+        macd_td = f'\n  <td>{macd_cell}</td>'
+    else:
+        macd_td = ''
     return f'''<tr>
   <td class="code">{code}</td>
   <td>{name}</td>
@@ -120,18 +160,20 @@ def render_e_row(code, name, res):
   <td>{sb_cell}</td>
   <td>{bbw_cell}</td>
   <td>{rvol_cell}</td>
-  <td>{pp_cell}</td>
+  <td>{pp_cell}</td>{macd_td}
 </tr>'''
 
 
-def render_section(title, cls, results):
+def render_section(title, cls, results, with_macd=True):
+    header = HEADER_MACD if with_macd else HEADER
+    span = 12 if with_macd else 11
     html = [f'<div class="section">', f'<h3 class="{cls}">{title}</h3>',
-            '<div class="table-wrap">', '<table class="ta-table">', HEADER, '<tbody>']
+            '<div class="table-wrap">', '<table class="ta-table">', header, '<tbody>']
     if results:
         for code, name, res in results:
-            html.append(render_e_row(code, name, res))
+            html.append(render_e_row(code, name, res, with_macd=with_macd))
     else:
-        html.append('<tr><td colspan="11" class="muted">(無候選)</td></tr>')
+        html.append(f'<tr><td colspan="{span}" class="muted">(無候選)</td></tr>')
     html += ['</tbody></table>', '</div>', '</div>']
     return '\n'.join(html)
 
@@ -280,7 +322,8 @@ def main():
         for code in args.codes:
             nm = con.execute('SELECT stock_name FROM daily_holdings WHERE stock_code=? LIMIT 1',
                              (code,)).fetchone()
-            results.append((code, nm[0] if nm else code, analyze_e(con, code)))
+            res = enrich_macd(con, code, analyze_e(con, code), 'pos')
+            results.append((code, nm[0] if nm else code, res))
         tabs.append(('ALL', '所有', results, []))
     else:
         for code in ALL_ETFS:
@@ -292,8 +335,8 @@ def main():
                 pos_cands = get_candidates(analysis, 'pos')
                 neg_cands = get_candidates(analysis, 'neg')
             print(f'  candidates: {len(pos_cands)} pos, {len(neg_cands)} neg')
-            pos_r = [(sc, nm, analyze_e(con, sc)) for sc, nm in pos_cands]
-            neg_r = [(sc, nm, analyze_e(con, sc)) for sc, nm in neg_cands]
+            pos_r = [(sc, nm, enrich_macd(con, sc, analyze_e(con, sc), 'pos')) for sc, nm in pos_cands]
+            neg_r = [(sc, nm, enrich_macd(con, sc, analyze_e(con, sc), 'neg')) for sc, nm in neg_cands]
             tabs.append((code, ETF_DISPLAY.get(code, code), pos_r, neg_r))
 
     con.close()
