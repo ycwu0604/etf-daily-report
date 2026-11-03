@@ -25,9 +25,8 @@ from datetime import datetime
 from pathlib import Path
 
 from e_report import (render_e_row, render_summary, summarize,
-                      HEADER, E_EXTRA_CSS, MIN_BARS)
+                      HEADER_MACD, E_EXTRA_CSS, MIN_BARS, asof_signals_full)
 from ta_report import CSS, TAB_JS, load_prices
-from position_advisor import precompute, advisor_at
 
 HISTORY_DAYS = 5  # 日期 tab 數量(交易日)
 
@@ -58,32 +57,11 @@ def resolve_name(con: sqlite3.Connection, code: str, file_name: str) -> str:
     return code
 
 
-# ── As-of E signal (replay past dates from the full price series) ──
-def asof_signals(df, asof_dates):
-    """For one code's FULL price series, compute the 定案 E signal as-of each
-    target date (last bar with date <= target). Returns {date: res_or_None}.
-
-    precompute() runs once per code (vectorized, no-lookahead); advisor_at()
-    then reads any historical index in O(1). Same call shape as analyze_e
-    (e_report.analyze_e just fixes the index to the last bar)."""
-    if df is None or len(df) < MIN_BARS:
-        return {d: None for d in asof_dates}
-    pc = precompute(df)
-    idx = df.index
-    closes = df['close'].to_numpy()
-    out = {}
-    for d in asof_dates:
-        i = int(idx.searchsorted(d, side='right')) - 1  # last bar with date <= d
-        if i < 0:
-            out[d] = None
-            continue
-        res = advisor_at(pc, i, 'pos', 'down')
-        if res is None:
-            out[d] = None
-            continue
-        res['close'] = float(closes[i])
-        out[d] = res
-    return out
+# ── MACD 訊號立場: 自訂清單沒有 ETF 方向, 用該股自己的 E regime 當方向 ──
+def trend_dir(res):
+    """上升→看多(pos), 下跌→看空(neg), 整理→neutral。給 e_report.asof_signals_full
+    當 slope_dir callable — 該日 regime 決定該股 MACD 訊號的看多/看空立場。"""
+    return {'up': 'pos', 'down': 'neg'}.get(res.get('regime', ''), 'neutral')
 
 
 # ── HTML rendering (date tabs next to the header, flat table per date) ──
@@ -140,12 +118,13 @@ def render_watchlist_history(tab_dates, date_results, output_path):
         h.append(render_summary(summary))
         h.append('<p class="ind">倉位: 長條=帶內位置、數字=目標倉位(下降趨勢→0)｜'
                  '<b style="color:#4527a0">深紫粗體=進場訊號</b>(均值回歸買點 / 壓縮突破 / 建倉)｜'
+                 'MACD訊號=該日 TA 訊號(立場依該股趨勢: 升→看多/跌→看空)｜'
                  '歷史=以「今日清單」用該日收盤重算｜清單來源: watchlist.txt</p>')
         h.append('<div class="section"><div class="table-wrap"><table class="ta-table">')
-        h.append(HEADER)
+        h.append(HEADER_MACD)
         h.append('<tbody>')
         for code, name, res in results:
-            h.append(render_e_row(code, name, res))
+            h.append(render_e_row(code, name, res, with_macd=True))
         h.append('</tbody></table></div></div>')
         h.append('</div>')
 
@@ -192,18 +171,17 @@ def main():
         per_code.append((code, name, df))
         if df is not None and len(df) >= MIN_BARS:
             all_dates.update(df.index.tolist())
-    con.close()
-
     tab_dates = sorted(all_dates)[-args.days:]  # most recent N trading days, ascending
     print(f'[WL] {len(tab_dates)} history dates: '
           + ', '.join(d.strftime('%Y-%m-%d') for d in tab_dates))
 
-    # Pass 2: per-date signal for the (current) watchlist.
+    # Pass 2: per-date E + MACD signal (asof_signals_full 需要 con 查 P/E, 故在 close 前).
     date_results = {d: [] for d in tab_dates}
     for code, name, df in per_code:
-        sig = asof_signals(df, tab_dates)
+        sig = asof_signals_full(con, code, df, tab_dates, trend_dir)
         for d in tab_dates:
             date_results[d].append((code, name, sig[d]))
+    con.close()
 
     print(f'[WL] Rendering → {args.out}')
     render_watchlist_history(tab_dates, date_results, args.out)
