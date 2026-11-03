@@ -18,8 +18,9 @@ from pathlib import Path
 
 from analyze import (ALL_ETFS, ETFS_WITH_WEIGHT, ETF_DISPLAY,
                      fetch_etf_history, analyze_view)
-from ta_report import (get_candidates, load_prices, CSS, TAB_JS,
-                       STAGE_COLORS, STAGE_TEXT, SIGNAL_COLORS, analyze_stock)
+from ta_report import (get_candidates, load_prices, CSS,
+                       STAGE_COLORS, STAGE_TEXT, SIGNAL_COLORS)
+from ta_indicators import calc_indicators, calc_support_resistance
 from ta_classify import generate_signal
 from position_advisor import precompute, advisor_at
 
@@ -50,24 +51,49 @@ def analyze_e(con, stock_code):
     return res
 
 
-# ── MACD 訊號 (TA 訊號欄, 加到 E 表) ───────────────────────
-def macd_signal(con, code, slope_dir):
-    """TA (MACD) 訊號 for one code: (signal, note) via analyze_stock +
-    generate_signal. slope_dir = 'pos'/'neg' (candidate 方向). Returns ('—','')
-    when the code lacks enough data."""
-    ta = analyze_stock(con, code)
-    if ta is None:
+# ── 5 天 replay: E + MACD 訊號 as-of 每個交易日 ─────────────
+def _macd_asof(ind, macd_hist, i, slope_dir, pe):
+    """MACD (TA) 訊號 as-of index i. 用 ≤i 的 indicator slice 算 S/R 位置 +
+    3 日 MACD slope (calc_support_resistance 是看最後一根, 故先 slice)."""
+    ind_asof = ind.iloc[:i + 1]
+    if len(ind_asof) < 4 or ind_asof['macd_hist'].isna().iloc[-1]:
         return ('—', '')
-    r = generate_signal(slope_dir, ta['sr'].get('position', 0.5),
-                        ta['signals'].get('slope_3d', 0), ta.get('pe'))
-    return (r['signal'], r.get('note', ''))
+    sr = calc_support_resistance(ind_asof)
+    slope_3d = macd_hist[i] - (macd_hist[i - 3] if i >= 3 else 0.0)
+    g = generate_signal(slope_dir, sr.get('position', 0.5), slope_3d, pe)
+    return (g['signal'], g.get('note', ''))
 
 
-def enrich_macd(con, code, res, slope_dir):
-    """Attach MACD 訊號 to an E res dict (in place). No-op when res is None."""
-    if res is not None:
-        res['macd_signal'], res['macd_note'] = macd_signal(con, code, slope_dir)
-    return res
+def asof_signals_full(con, code, df, dates, slope_dir):
+    """E + MACD 訊號 as-of 每個 date (≤date 最後一根 bar). Returns {date: res_or_None}.
+    res 含 close / macd_signal / macd_note. slope_dir: 'pos'/'neg'/'neutral' (固定),
+    或 callable(res)->str (依該日 regime 決定, 自訂清單用).
+    precompute / calc_indicators 各跑一次; 每個 date 只讀對應 index."""
+    if df is None or len(df) < MIN_BARS:
+        return {d: None for d in dates}
+    pc = precompute(df)
+    ind = calc_indicators(df)
+    idx = df.index
+    closes = df['close'].to_numpy()
+    macd_hist = ind['macd_hist'].to_numpy()
+    peer = con.execute('SELECT pe_ratio FROM stock_fundamentals WHERE stock_code=? '
+                       'ORDER BY date DESC LIMIT 1', (code,)).fetchone()
+    pe = peer[0] if peer else None
+    out = {}
+    for d in dates:
+        i = int(idx.searchsorted(d, side='right')) - 1  # last bar with date <= d
+        if i < 0:
+            out[d] = None
+            continue
+        res = advisor_at(pc, i, 'pos', 'down')
+        if res is None:
+            out[d] = None
+            continue
+        res['close'] = float(closes[i])
+        sd = slope_dir(res) if callable(slope_dir) else slope_dir
+        res['macd_signal'], res['macd_note'] = _macd_asof(ind, macd_hist, i, sd, pe)
+        out[d] = res
+    return out
 
 
 # ── HTML rendering (mirrors ta_report style) ─────────────────
@@ -244,37 +270,77 @@ E_EXTRA_CSS = """
 """
 
 
-def render_etf_tab(key, pos_results, neg_results):
-    html = [f'<div class="tab-content" id="tab-{key}">']
-    html.append(render_section('▲ 斜率正候選', 'pos-title', pos_results))
-    html.append(render_section('▼ 斜率負候選', 'neg-title', neg_results))
-    html.append('</div>')
-    return '\n'.join(html)
+# 巢狀 tab 切換 (日期 tab > ETF tab). 每個 [data-tab-group] 独立管自己的
+# .tabs 按鈕 + .tab-content; :scope > 確保不誤抓下一層巢狀 group 的按鈕/panel.
+NESTED_TAB_JS = """
+<script>
+(function () {
+  document.querySelectorAll('[data-tab-group]').forEach(function (group) {
+    var btns = Array.from(group.querySelectorAll(':scope > .tabs .tab-btn'));
+    var panes = Array.from(group.querySelectorAll(':scope > .tab-content'));
+    function activate(i) {
+      i = Math.max(0, Math.min(i, btns.length - 1));
+      btns.forEach(function (b, j) { b.classList.toggle('active', j === i); });
+      panes.forEach(function (p, j) { p.classList.toggle('active', j === i); });
+    }
+    btns.forEach(function (b, j) {
+      b.addEventListener('click', function () { activate(j); });
+    });
+  });
+})();
+</script>
+"""
 
 
-def render_html(tabs, summary, output_path, title='ETF 持股 訊號'):
-    """tabs: list of (key, label, pos_results, neg_results)
-    summary: dict from summarize() for the top 今日訊號 bar"""
-    today = datetime.now().strftime('%Y-%m-%d %H:%M')
+def render_history(date_data, output_path, title='ETF 持股 訊號'):
+    """date_data: [(date, summary, tabs)] where tabs=[(key,label,pos_r,neg_r)].
+    巢狀: 日期 tab (最上層) > 每個日期內的 ETF tab。最新日期預設選中。"""
+    gen_time = datetime.now().strftime('%Y-%m-%d %H:%M')
+    ordered = list(reversed(date_data))  # 新 -> 舊, index 0 = 最新 = 預設
     h = ['<!DOCTYPE html>', '<html lang="zh-Hant"><head>', '<meta charset="utf-8">',
          '<meta name="viewport" content="width=device-width, initial-scale=1">',
-          f'<title>{title}</title>', f'<style>{CSS}{E_EXTRA_CSS}</style>',
-          '<script async src="https://www.googletagmanager.com/gtag/js?id=G-N5G6CVZ1YJ"></script>',
-          '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
-          'gtag("js",new Date());gtag("config","G-N5G6CVZ1YJ");</script>',
-          '</head><body>',
-         f'<h1>{title}</h1>', f'<p class="meta">{today}</p>',
-         render_summary(summary),
-         '<p class="ind">倉位: 長條=帶內位置、數字=目標倉位(下降趨勢→0)｜'
-         '<b style="color:#4527a0">深紫粗體=進場訊號</b>(均值回歸買點 / 壓縮突破 / 建倉)</p>',
-         '<div class="tabs">']
-    for i, (key, label, _, _) in enumerate(tabs):
+         f'<title>{title}</title>', f'<style>{CSS}{E_EXTRA_CSS}</style>',
+         '<script async src="https://www.googletagmanager.com/gtag/js?id=G-N5G6CVZ1YJ"></script>',
+         '<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}'
+         'gtag("js",new Date());gtag("config","G-N5G6CVZ1YJ");</script>',
+         '</head><body>',
+         f'<h1>{title}</h1>', f'<p class="meta">產出 {gen_time}</p>']
+    if not ordered:
+        h += ['<p class="muted">(無資料 — 無候選或歷史不足)</p>', '</body></html>']
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text('\n'.join(h), encoding='utf-8')
+        return
+    # 日期 tab-group (最上層)
+    h.append('<div data-tab-group>')
+    h.append('<div class="tabs">')
+    for i, (d, summ, tabs) in enumerate(ordered):
         active = ' active' if i == 0 else ''
-        h.append(f'  <button class="tab-btn{active}" data-tab="tab-{key}">{label}</button>')
+        h.append(f'  <button class="tab-btn{active}">{d.strftime("%m-%d")}</button>')
     h.append('</div>')
-    for (key, label, pos_r, neg_r) in tabs:
-        h.append(render_etf_tab(key, pos_r, neg_r))
-    h += [TAB_JS, '</body></html>']
+    for i, (d, summ, tabs) in enumerate(ordered):
+        active = ' active' if i == 0 else ''
+        h.append(f'<div class="tab-content date-pane{active}">')
+        h.append(render_summary(summ))
+        h.append('<p class="ind">倉位: 長條=帶內位置、數字=目標倉位(下降趨勢→0)｜'
+                 '<b style="color:#4527a0">深紫粗體=進場訊號</b>(均值回歸買點 / 壓縮突破 / 建倉)｜'
+                 '歷史=固定今日候選、逐日重算｜MACD訊號=該日 TA 訊號</p>')
+        # ETF tab-group (巢狀, 日期 pane 內)
+        h.append('<div data-tab-group>')
+        h.append('<div class="tabs">')
+        for j, (key, label, _, _) in enumerate(tabs):
+            active = ' active' if j == 0 else ''
+            h.append(f'  <button class="tab-btn{active}">{label}</button>')
+        h.append('</div>')
+        for j, (key, label, pos_r, neg_r) in enumerate(tabs):
+            active = ' active' if j == 0 else ''
+            h.append(f'<div class="tab-content etf-pane{active}">')
+            h.append(render_section('▲ 斜率正候選', 'pos-title', pos_r))
+            h.append(render_section('▼ 斜率負候選', 'neg-title', neg_r))
+            h.append('</div>')
+        h.append('</div>')  # /ETF group
+        h.append('</div>')  # /date pane
+    h.append('</div>')  # /date group
+    h += [NESTED_TAB_JS, '</body></html>']
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text('\n'.join(h), encoding='utf-8')
 
@@ -302,6 +368,8 @@ def main():
     p.add_argument('--db', required=True, help='Path to etf_data.db')
     p.add_argument('--out', required=True, help='Output HTML path')
     p.add_argument('--codes', nargs='*', help='Override: flat list of stock codes (test mode)')
+    p.add_argument('--days', type=int, default=5,
+                   help='Number of trading-day history tabs (default: 5)')
     args = p.parse_args()
 
     db_path = Path(args.db)
@@ -315,40 +383,67 @@ def main():
         open REAL, high REAL, low REAL, close REAL, volume INTEGER,
         PRIMARY KEY (stock_code, date))''')
 
-    tabs = []
+    # 1. 固定候選 (今天的候選股; 歷史 tab 沿用此清單, 訊號逐日重算)
+    etf_cands = []  # (key, label, pos_cands, neg_cands)
     if args.codes:
-        # flat test mode: single "所有" tab
-        results = []
+        cands = []
         for code in args.codes:
             nm = con.execute('SELECT stock_name FROM daily_holdings WHERE stock_code=? LIMIT 1',
                              (code,)).fetchone()
-            res = enrich_macd(con, code, analyze_e(con, code), 'pos')
-            results.append((code, nm[0] if nm else code, res))
-        tabs.append(('ALL', '所有', results, []))
+            cands.append((code, nm[0] if nm else code))
+        etf_cands.append(('ALL', '所有', cands, []))
     else:
         for code in ALL_ETFS:
-            print(f'[E] {code} ({ETF_DISPLAY.get(code, code)})...')
             pos_cands = neg_cands = []
             history, dates = fetch_etf_history(con, code)
             if dates:
                 analysis = analyze_view(history, dates, code in ETFS_WITH_WEIGHT)
                 pos_cands = get_candidates(analysis, 'pos')
                 neg_cands = get_candidates(analysis, 'neg')
-            print(f'  candidates: {len(pos_cands)} pos, {len(neg_cands)} neg')
-            pos_r = [(sc, nm, enrich_macd(con, sc, analyze_e(con, sc), 'pos')) for sc, nm in pos_cands]
-            neg_r = [(sc, nm, enrich_macd(con, sc, analyze_e(con, sc), 'neg')) for sc, nm in neg_cands]
-            tabs.append((code, ETF_DISPLAY.get(code, code), pos_r, neg_r))
+            print(f'[E] {code} ({ETF_DISPLAY.get(code, code)}): {len(pos_cands)} pos, {len(neg_cands)} neg')
+            etf_cands.append((code, ETF_DISPLAY.get(code, code), pos_cands, neg_cands))
 
+    # 2. 載入候選股 df (cache) + 收交易日期
+    cand_codes, seen = [], set()
+    for (key, label, pos_c, neg_c) in etf_cands:
+        for sc, nm in pos_c + neg_c:
+            if sc not in seen:
+                seen.add(sc)
+                cand_codes.append(sc)
+    df_cache, all_dates = {}, set()
+    for sc in cand_codes:
+        df = load_prices(con, sc)
+        df_cache[sc] = df
+        if df is not None and len(df) >= MIN_BARS:
+            all_dates.update(df.index.tolist())
+    tab_dates = sorted(all_dates)[-args.days:]
+    print(f'[E] {len(tab_dates)} history dates: '
+          + ', '.join(d.strftime('%Y-%m-%d') for d in tab_dates))
+
+    # 3. 每個 (etf, code, 方向) 一次算全部日期 (precompute/calc_indicators 各一次)
+    precomp = {}
+    for (key, label, pos_c, neg_c) in etf_cands:
+        for sc, nm in pos_c:
+            precomp[(key, sc, 'pos')] = asof_signals_full(con, sc, df_cache[sc], tab_dates, 'pos')
+        for sc, nm in neg_c:
+            precomp[(key, sc, 'neg')] = asof_signals_full(con, sc, df_cache[sc], tab_dates, 'neg')
     con.close()
-    # 今日訊號摘要: aggregate unique codes across all tabs
-    all_results = []
-    for (key, label, pos_r, neg_r) in tabs:
-        for code, name, res in pos_r + neg_r:
-            if res is not None:
-                all_results.append((code, res))
-    summary = summarize(all_results)
+
+    # 4. 組每日期資料
+    date_data = []
+    for d in tab_dates:
+        tabs, all_results = [], []
+        for (key, label, pos_c, neg_c) in etf_cands:
+            pos_r = [(sc, nm, precomp[(key, sc, 'pos')][d]) for sc, nm in pos_c]
+            neg_r = [(sc, nm, precomp[(key, sc, 'neg')][d]) for sc, nm in neg_c]
+            for sc, nm, res in pos_r + neg_r:
+                if res is not None:
+                    all_results.append((sc, res))
+            tabs.append((key, label, pos_r, neg_r))
+        date_data.append((d, summarize(all_results), tabs))
+
     print(f'[E] Rendering → {args.out}')
-    render_html(tabs, summary, args.out)
+    render_history(date_data, args.out)
     print('[DONE]')
 
 
