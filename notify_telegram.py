@@ -12,6 +12,7 @@ Usage:
     ok = send_rotation_alert(alerts)
 """
 
+import html
 import os
 import requests
 
@@ -94,7 +95,7 @@ def format_alert(alert: dict) -> str:
         f"{action_text}\n"
         f"💰 {trade_text}\n"
         f"💵 {alert['equity_code']} 收: ${alert['price']:.2f}\n"
-        f"📝 {alert['reason']}"
+        f"📝 {html.escape(alert['reason'])}"
     )
 
 
