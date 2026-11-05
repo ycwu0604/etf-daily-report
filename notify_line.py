@@ -18,13 +18,14 @@ Usage:
     ok = send_line_alert(alerts)
 """
 
+import html
 import os
 import re
 import requests
 
 from notify_telegram import format_alert  # reuse the rotation-alert text format
 
-LINE_PUSH_API = "https://api.line.me/v2/bot/message/push"
+LINE_MULTICAST_API = "https://api.line.me/v2/bot/message/multicast"
 TEXT_LIMIT = 5000  # LINE text message length limit (chars)
 
 
@@ -52,30 +53,35 @@ def _send_line(text: str) -> bool:
         print("  [WARN] No LINE_USER_ID set (skip LINE)")
         return False
 
-    all_ok = True
-    for uid in user_ids:
-        try:
-            r = requests.post(
-                LINE_PUSH_API,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json={"to": uid, "message": {"type": "text", "text": text[:TEXT_LIMIT]}},
-                timeout=10,
-            )
-            if r.status_code != 200:
-                print(f"  [ERR] LINE API (user {uid}): HTTP {r.status_code}: {r.text}")
-                all_ok = False
-        except Exception as e:
-            print(f"  [ERR] LINE send to {uid} failed: {e}")
-            all_ok = False
-    return all_ok
+    if not text:
+        print("  [WARN] LINE text empty (skip)")
+        return False
+
+    body = {"to": user_ids, "messages": [{"type": "text", "text": text[:TEXT_LIMIT]}]}
+    try:
+        r = requests.post(
+            LINE_MULTICAST_API,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=body,
+            timeout=10,
+        )
+        if r.status_code != 200:
+            print(f"  [ERR] LINE API: HTTP {r.status_code}: {r.text}")
+            return False
+        # Log delivery result so a non-friend (silently dropped by multicast) is visible.
+        print(f"  [LINE] {r.text[:300]}")
+    except Exception as e:
+        print(f"  [ERR] LINE send failed: {e}")
+        return False
+    return True
 
 
 def send_line_alert(alerts: list[dict]) -> bool:
     """Send rotation alerts to LINE as plain text (HTML stripped). True on success."""
     if not alerts:
         return True
-    message = "\n\n".join(_strip_html(format_alert(a)) for a in alerts)
+    message = "\n\n".join(html.unescape(_strip_html(format_alert(a))) for a in alerts)
     return _send_line(message)
