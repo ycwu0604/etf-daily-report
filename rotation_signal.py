@@ -29,7 +29,7 @@ from rotation_strategy import (
     classify_session, is_weekend,
     init_rotation_table, get_latest_allocation, record_allocation,
 )
-from notify_telegram import send_rotation_alert, _send_message
+from notify_telegram import send_rotation_alert, _send_message, text_bar
 from notify_line import send_line_alert, _send_line
 
 # ── Config ─────────────────────────────────────────────────────────────
@@ -226,14 +226,15 @@ def main():
     today = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
     lines = [f'📊 ETF 輪動訊號 {today}']
     for ps in pair_summaries:
-        delta_str = f'{ps["delta"]:+d}%' if ps["delta"] != 0 else '—'
-        lines.append(f'{ps["label"]}: {ps["pct"]}% {ps["regime"]} | 動能{ps["momentum"]:+.1f}% | Δ{delta_str}')
+        lines.append('')
+        lines.append(ps["label"])
+        lines.append(f'  {text_bar(ps["pct"])}  {ps["pct"]:>3}% {ps["regime"]} 動能{ps["momentum"]:+.1f}%')
     summary_msg = '\n'.join(lines)
     ok_tg = _send_message(summary_msg)
     ok_line = _send_line(summary_msg)
     print(f'[Signal] Daily summary sent ✓ (TG={"OK" if ok_tg else "FAIL"}, '
           f'LINE={"OK" if ok_line else "FAIL"})')
-     
+
     # Write signal JSON (for debugging / future use)
     signal = {
         'time': now_str,
