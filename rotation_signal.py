@@ -30,7 +30,7 @@ from rotation_strategy import (
     init_rotation_table, get_latest_allocation, record_allocation,
 )
 from notify_telegram import send_rotation_alert, _send_message
-from notify_line import send_line_alert
+from notify_line import send_line_alert, _send_line
 
 # ── Config ─────────────────────────────────────────────────────────────
 ALERT_THRESHOLD = 10  # notify if allocation changes by >= this %
@@ -229,9 +229,11 @@ def main():
         delta_str = f'{ps["delta"]:+d}%' if ps["delta"] != 0 else '—'
         lines.append(f'{ps["label"]}: {ps["pct"]}% {ps["regime"]} | 動能{ps["momentum"]:+.1f}% | Δ{delta_str}')
     summary_msg = '\n'.join(lines)
-    _send_message(summary_msg)
-    print('[Signal] Daily summary sent ✓')
-
+    ok_tg = _send_message(summary_msg)
+    ok_line = _send_line(summary_msg)
+    print(f'[Signal] Daily summary sent ✓ (TG={"OK" if ok_tg else "FAIL"}, '
+          f'LINE={"OK" if ok_line else "FAIL"})')
+     
     # Write signal JSON (for debugging / future use)
     signal = {
         'time': now_str,
