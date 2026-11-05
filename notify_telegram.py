@@ -59,6 +59,13 @@ def _send_message(text: str) -> bool:
     return all_ok
 
 
+def text_bar(equity_pct, width: int = 20) -> str:
+    """Single split bar: '█' (equity) + '░' (bond), e.g. 60 -> '████████████████░░░░'."""
+    p = max(0, min(100, int(equity_pct)))
+    n = round(width * p / 100)
+    return "█" * n + "░" * (width - n)
+
+
 def format_alert(alert: dict) -> str:
     """Format a single alert into HTML message text."""
     regime_emoji = "🔴" if alert["regime"] == "bull" else "🟢"
@@ -93,6 +100,7 @@ def format_alert(alert: dict) -> str:
         f"📌 {alert['label']}\n"
         f"{regime_emoji} {regime_cn} | {MOM_WINDOW}d動能: {alert['momentum']:+.2f}%\n"
         f"{action_text}\n"
+        f"   {text_bar(alert['new_pct'])}  {alert['new_pct']}%股 / {100 - alert['new_pct']}%債\n"
         f"💰 {trade_text}\n"
         f"💵 {alert['equity_code']} 收: ${alert['price']:.2f}\n"
         f"📝 {html.escape(alert['reason'])}"
