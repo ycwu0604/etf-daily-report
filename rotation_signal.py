@@ -228,7 +228,8 @@ def main():
     for ps in pair_summaries:
         lines.append('')
         lines.append(ps["label"])
-        lines.append(f'  {text_bar(ps["pct"])}  {ps["pct"]:>3}% {ps["regime"]} 動能{ps["momentum"]:+.1f}%')
+        lines.append(f'  {text_bar(ps["pct"])}')
+        lines.append(f'  {ps["pct"]}% {ps["regime"]} 動能{ps["momentum"]:+.1f}%')
     summary_msg = '\n'.join(lines)
     ok_tg = _send_message(summary_msg)
     ok_line = _send_line(summary_msg)
